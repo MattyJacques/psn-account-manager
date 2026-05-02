@@ -108,6 +108,8 @@ function renderAccounts(accounts) {
 
     const tdPwd = document.createElement("td");
     tdPwd.className = "col-password";
+    const pwdWrap = document.createElement("div");
+    pwdWrap.className = "col-password-inner";
     const pwdVal = document.createElement("span");
     pwdVal.className = "pwd-value";
     pwdVal.textContent = maskPassword(account.password);
@@ -121,11 +123,14 @@ function renderAccounts(accounts) {
       pwdVal.textContent = visible ? account.password : maskPassword(account.password);
       showBtn.textContent = visible ? "Hide" : "Show";
     });
-    tdPwd.appendChild(pwdVal);
-    tdPwd.appendChild(showBtn);
+    pwdWrap.appendChild(pwdVal);
+    pwdWrap.appendChild(showBtn);
+    tdPwd.appendChild(pwdWrap);
 
     const tdActions = document.createElement("td");
     tdActions.className = "col-actions";
+    const actionsWrap = document.createElement("div");
+    actionsWrap.className = "col-actions-inner";
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.textContent = "Edit";
@@ -141,8 +146,9 @@ function renderAccounts(accounts) {
       await saveAccounts(next);
       renderAccounts(next);
     });
-    tdActions.appendChild(editBtn);
-    tdActions.appendChild(deleteBtn);
+    actionsWrap.appendChild(editBtn);
+    actionsWrap.appendChild(deleteBtn);
+    tdActions.appendChild(actionsWrap);
 
     tr.appendChild(tdLabel);
     tr.appendChild(tdEmail);
