@@ -61,7 +61,6 @@ main { padding: 12px 14px; }
 .account-list-wrap {
   max-height: 240px;
   overflow-y: auto;
-  margin-bottom: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
