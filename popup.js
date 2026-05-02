@@ -73,22 +73,6 @@ function startEdit(account) {
   els.form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-async function copyToClipboard(text, button) {
-  try {
-    await navigator.clipboard.writeText(text);
-    const original = button.textContent;
-    button.textContent = "Copied";
-    button.classList.add("copied");
-    setTimeout(() => {
-      button.textContent = original;
-      button.classList.remove("copied");
-    }, 1200);
-  } catch {
-    button.textContent = "Failed";
-    setTimeout(() => { button.textContent = "Copy"; }, 1200);
-  }
-}
-
 function maskPassword(pwd) {
   return "•".repeat(Math.min(pwd.length, 12));
 }
@@ -104,31 +88,48 @@ function renderAccounts(accounts) {
   }
 
   accounts.forEach((account) => {
-    const li = document.createElement("li");
-    li.className = "account";
+    const tr = document.createElement("tr");
 
-    const head = document.createElement("div");
-    head.className = "account-head";
-
-    const labelEl = document.createElement("div");
-    labelEl.className = "account-label";
+    const tdLabel = document.createElement("td");
+    tdLabel.className = "col-label";
     if (account.label) {
-      labelEl.textContent = account.label;
+      tdLabel.textContent = account.label;
     } else {
       const span = document.createElement("span");
       span.className = "untitled";
       span.textContent = "Untitled";
-      labelEl.appendChild(span);
+      tdLabel.appendChild(span);
     }
 
-    const actions = document.createElement("div");
-    actions.className = "account-actions";
+    const tdEmail = document.createElement("td");
+    tdEmail.className = "col-email";
+    tdEmail.textContent = account.email;
+    tdEmail.title = account.email;
 
+    const tdPwd = document.createElement("td");
+    tdPwd.className = "col-password";
+    const pwdVal = document.createElement("span");
+    pwdVal.className = "pwd-value";
+    pwdVal.textContent = maskPassword(account.password);
+    const showBtn = document.createElement("button");
+    showBtn.type = "button";
+    showBtn.className = "icon-btn";
+    showBtn.textContent = "Show";
+    let visible = false;
+    showBtn.addEventListener("click", () => {
+      visible = !visible;
+      pwdVal.textContent = visible ? account.password : maskPassword(account.password);
+      showBtn.textContent = visible ? "Hide" : "Show";
+    });
+    tdPwd.appendChild(pwdVal);
+    tdPwd.appendChild(showBtn);
+
+    const tdActions = document.createElement("td");
+    tdActions.className = "col-actions";
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.textContent = "Edit";
     editBtn.addEventListener("click", () => startEdit(account));
-
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "delete";
@@ -140,66 +141,15 @@ function renderAccounts(accounts) {
       await saveAccounts(next);
       renderAccounts(next);
     });
+    tdActions.appendChild(editBtn);
+    tdActions.appendChild(deleteBtn);
 
-    actions.appendChild(editBtn);
-    actions.appendChild(deleteBtn);
-    head.appendChild(labelEl);
-    head.appendChild(actions);
-    li.appendChild(head);
-
-    li.appendChild(makeRow("Email", account.email, account.email));
-
-    const pwdRow = makeRow("Password", maskPassword(account.password), account.password, true);
-    li.appendChild(pwdRow);
-
-    if (account.notes && account.notes.trim()) {
-      const notesEl = document.createElement("div");
-      notesEl.className = "notes";
-      notesEl.textContent = account.notes;
-      li.appendChild(notesEl);
-    }
-
-    els.list.appendChild(li);
+    tr.appendChild(tdLabel);
+    tr.appendChild(tdEmail);
+    tr.appendChild(tdPwd);
+    tr.appendChild(tdActions);
+    els.list.appendChild(tr);
   });
-}
-
-function makeRow(labelText, displayValue, copyValue, isPassword = false) {
-  const row = document.createElement("div");
-  row.className = "account-row";
-
-  const lab = document.createElement("span");
-  lab.className = "field-label";
-  lab.textContent = labelText;
-
-  const val = document.createElement("span");
-  val.className = "value";
-  val.textContent = displayValue;
-
-  const copyBtn = document.createElement("button");
-  copyBtn.type = "button";
-  copyBtn.className = "copy-btn";
-  copyBtn.textContent = "Copy";
-  copyBtn.addEventListener("click", () => copyToClipboard(copyValue, copyBtn));
-
-  row.appendChild(lab);
-  row.appendChild(val);
-
-  if (isPassword) {
-    const showBtn = document.createElement("button");
-    showBtn.type = "button";
-    showBtn.className = "copy-btn";
-    showBtn.textContent = "Show";
-    let visible = false;
-    showBtn.addEventListener("click", () => {
-      visible = !visible;
-      val.textContent = visible ? copyValue : maskPassword(copyValue);
-      showBtn.textContent = visible ? "Hide" : "Show";
-    });
-    row.appendChild(showBtn);
-  }
-
-  row.appendChild(copyBtn);
-  return row;
 }
 
 els.togglePwd.addEventListener("click", () => {

@@ -15,7 +15,19 @@
   </header>
 
   <main>
-    <ul id="accountList" class="account-list" aria-live="polite"></ul>
+    <div class="account-list-wrap">
+      <table class="account-table">
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th>Email</th>
+            <th>Password</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="accountList" aria-live="polite"></tbody>
+      </table>
+    </div>
 
     <p id="emptyState" class="empty-state hidden">
       No accounts yet. Add your first one below.
