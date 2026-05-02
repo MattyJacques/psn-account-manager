@@ -1,6 +1,6 @@
 const STORAGE_KEY = "psn_accounts";
 
-const els = {
+const elements = {
   list: document.getElementById("accountList"),
   listWrap: document.getElementById("accountListWrap"),
   empty: document.getElementById("emptyState"),
@@ -38,47 +38,47 @@ function uid() {
 
 function setError(msg) {
   if (!msg) {
-    els.formError.classList.add("hidden");
-    els.formError.textContent = "";
+    elements.formError.classList.add("hidden");
+    elements.formError.textContent = "";
   } else {
-    els.formError.textContent = msg;
-    els.formError.classList.remove("hidden");
+    elements.formError.textContent = msg;
+    elements.formError.classList.remove("hidden");
   }
 }
 
 function resetForm() {
-  els.form.reset();
-  els.editId.value = "";
-  els.formTitle.textContent = "Add account";
-  els.saveBtn.textContent = "Save";
+  elements.form.reset();
+  elements.editId.value = "";
+  elements.formTitle.textContent = "Add account";
+  elements.saveBtn.textContent = "Save";
   setError("");
-  els.form.classList.add("hidden");
-  els.addBtn.textContent = "+ Add";
+  elements.form.classList.add("hidden");
+  elements.addBtn.textContent = "+ Add";
 }
 
 function startEdit(account) {
-  els.editId.value = account.id;
-  els.label.value = account.label || "";
-  els.email.value = account.email || "";
-  els.password.value = account.password || "";
-  els.formTitle.textContent = "Edit account";
-  els.saveBtn.textContent = "Update";
+  elements.editId.value = account.id;
+  elements.label.value = account.label || "";
+  elements.email.value = account.email || "";
+  elements.password.value = account.password || "";
+  elements.formTitle.textContent = "Edit account";
+  elements.saveBtn.textContent = "Update";
   setError("");
-  els.form.classList.remove("hidden");
-  els.addBtn.textContent = "✕ Close";
-  els.label.focus();
-  els.form.scrollIntoView({ behavior: "smooth", block: "start" });
+  elements.form.classList.remove("hidden");
+  elements.addBtn.textContent = "✕ Close";
+  elements.label.focus();
+  elements.form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderAccounts(accounts) {
-  els.list.innerHTML = "";
+  elements.list.innerHTML = "";
 
   if (accounts.length === 0) {
-    els.empty.classList.remove("hidden");
-    els.listWrap.classList.add("hidden");
+    elements.empty.classList.remove("hidden");
+    elements.listWrap.classList.add("hidden");
   } else {
-    els.empty.classList.add("hidden");
-    els.listWrap.classList.remove("hidden");
+    elements.empty.classList.add("hidden");
+    elements.listWrap.classList.remove("hidden");
   }
 
   accounts.forEach((account) => {
@@ -126,29 +126,29 @@ const tdActions = document.createElement("td");
     tr.appendChild(tdLabel);
     tr.appendChild(tdEmail);
     tr.appendChild(tdActions);
-    els.list.appendChild(tr);
+    elements.list.appendChild(tr);
   });
 }
 
 
-els.addBtn.addEventListener("click", () => {
-  if (els.form.classList.contains("hidden")) {
-    els.form.classList.remove("hidden");
-    els.addBtn.textContent = "✕ Close";
-    els.label.focus();
+elements.addBtn.addEventListener("click", () => {
+  if (elements.form.classList.contains("hidden")) {
+    elements.form.classList.remove("hidden");
+    elements.addBtn.textContent = "✕ Close";
+    elements.label.focus();
   } else {
     resetForm();
   }
 });
 
-els.form.addEventListener("submit", async (e) => {
+elements.form.addEventListener("submit", async (e) => {
   e.preventDefault();
   setError("");
 
-  const id = els.editId.value;
-  const label = els.label.value.trim();
-  const email = els.email.value.trim();
-  const password = els.password.value;
+  const id = elements.editId.value;
+  const label = elements.label.value.trim();
+  const email = elements.email.value.trim();
+  const password = elements.password.value;
 
   if (!email || !password) {
     setError("Email and password are required.");
@@ -182,7 +182,7 @@ els.form.addEventListener("submit", async (e) => {
   renderAccounts(next);
 });
 
-els.exportBtn.addEventListener("click", async () => {
+elements.exportBtn.addEventListener("click", async () => {
   const accounts = await loadAccounts();
   if (accounts.length === 0) {
     alert("Nothing to export.");
@@ -199,9 +199,9 @@ els.exportBtn.addEventListener("click", async () => {
   URL.revokeObjectURL(url);
 });
 
-els.importBtn.addEventListener("click", () => els.importFile.click());
+elements.importBtn.addEventListener("click", () => elements.importFile.click());
 
-els.importFile.addEventListener("change", async (e) => {
+elements.importFile.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
