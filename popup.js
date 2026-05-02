@@ -3,6 +3,7 @@ const STORAGE_KEY = "psn_accounts";
 
 const els = {
   list: document.getElementById("accountList"),
+  listWrap: document.getElementById("accountListWrap"),
   empty: document.getElementById("emptyState"),
   count: document.getElementById("count"),
   form: document.getElementById("accountForm"),
@@ -83,8 +84,10 @@ function renderAccounts(accounts) {
 
   if (accounts.length === 0) {
     els.empty.classList.remove("hidden");
+    els.listWrap.classList.add("hidden");
   } else {
     els.empty.classList.add("hidden");
+    els.listWrap.classList.remove("hidden");
   }
 
   accounts.forEach((account) => {

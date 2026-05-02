@@ -146,7 +146,7 @@ main { padding: 12px 14px; }
   gap: 4px;
 }
 
-.col-password .pwd-value {
+.col-password-inner .pwd-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   letter-spacing: 1px;
@@ -206,8 +206,7 @@ form label span {
 
 form input[type="text"],
 form input[type="email"],
-form input[type="password"],
-form textarea {
+form input[type="password"] {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
