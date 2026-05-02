@@ -12,6 +12,7 @@ const elements = {
   password: document.getElementById("password"),
   saveBtn: document.getElementById("saveBtn"),
   addBtn: document.getElementById("addBtn"),
+  refreshAllBtn: document.getElementById("refreshAllBtn"),
   formError: document.getElementById("formError"),
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
@@ -53,7 +54,7 @@ function resetForm() {
   elements.saveBtn.textContent = "Save";
   setError("");
   elements.form.classList.add("hidden");
-  elements.addBtn.textContent = "+ Add";
+  elements.addBtn.textContent = "+ Add Account";
 }
 
 function startEdit(account) {
@@ -139,6 +140,10 @@ elements.addBtn.addEventListener("click", () => {
   } else {
     resetForm();
   }
+});
+
+elements.refreshAllBtn.addEventListener("click", () => {
+  // NPSSO fetcher not implemented yet — placeholder for future work.
 });
 
 elements.form.addEventListener("submit", async (e) => {

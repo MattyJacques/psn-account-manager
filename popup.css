@@ -35,6 +35,8 @@ header {
 
 .brand { display: flex; align-items: center; gap: 10px; }
 
+.header-actions { display: flex; gap: 6px; align-items: center; }
+
 .logo {
   background: var(--accent);
   color: white;
