@@ -16,7 +16,6 @@ const els = {
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
   importFile: document.getElementById("importFile"),
-  clearAllBtn: document.getElementById("clearAllBtn"),
 };
 
 function loadAccounts() {
@@ -231,15 +230,6 @@ els.importFile.addEventListener("change", async (e) => {
     alert("Import failed: " + err.message);
   }
   e.target.value = "";
-});
-
-els.clearAllBtn.addEventListener("click", async () => {
-  const accounts = await loadAccounts();
-  if (accounts.length === 0) return;
-  if (!confirm(`Delete all ${accounts.length} account(s)? This cannot be undone.`)) return;
-  await saveAccounts([]);
-  resetForm();
-  renderAccounts([]);
 });
 
 (async function init() {
