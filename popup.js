@@ -1,20 +1,17 @@
-const MAX_ACCOUNTS = 10;
 const STORAGE_KEY = "psn_accounts";
 
 const els = {
   list: document.getElementById("accountList"),
   listWrap: document.getElementById("accountListWrap"),
   empty: document.getElementById("emptyState"),
-  count: document.getElementById("count"),
   form: document.getElementById("accountForm"),
   formTitle: document.getElementById("formTitle"),
   editId: document.getElementById("editId"),
   label: document.getElementById("label"),
   email: document.getElementById("email"),
   password: document.getElementById("password"),
-  togglePwd: document.getElementById("togglePwd"),
   saveBtn: document.getElementById("saveBtn"),
-  cancelBtn: document.getElementById("cancelBtn"),
+  addBtn: document.getElementById("addBtn"),
   formError: document.getElementById("formError"),
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
@@ -55,10 +52,9 @@ function resetForm() {
   els.editId.value = "";
   els.formTitle.textContent = "Add account";
   els.saveBtn.textContent = "Save";
-  els.cancelBtn.classList.add("hidden");
-  els.password.type = "password";
-  els.togglePwd.textContent = "Show";
   setError("");
+  els.form.classList.add("hidden");
+  els.addBtn.textContent = "+ Add";
 }
 
 function startEdit(account) {
@@ -68,19 +64,15 @@ function startEdit(account) {
   els.password.value = account.password || "";
   els.formTitle.textContent = "Edit account";
   els.saveBtn.textContent = "Update";
-  els.cancelBtn.classList.remove("hidden");
   setError("");
+  els.form.classList.remove("hidden");
+  els.addBtn.textContent = "✕ Close";
   els.label.focus();
   els.form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function maskPassword(pwd) {
-  return "•".repeat(Math.min(pwd.length, 12));
-}
-
 function renderAccounts(accounts) {
   els.list.innerHTML = "";
-  els.count.textContent = String(accounts.length);
 
   if (accounts.length === 0) {
     els.empty.classList.remove("hidden");
@@ -109,28 +101,7 @@ function renderAccounts(accounts) {
     tdEmail.textContent = account.email;
     tdEmail.title = account.email;
 
-    const tdPwd = document.createElement("td");
-    tdPwd.className = "col-password";
-    const pwdWrap = document.createElement("div");
-    pwdWrap.className = "col-password-inner";
-    const pwdVal = document.createElement("span");
-    pwdVal.className = "pwd-value";
-    pwdVal.textContent = maskPassword(account.password);
-    const showBtn = document.createElement("button");
-    showBtn.type = "button";
-    showBtn.className = "icon-btn";
-    showBtn.textContent = "Show";
-    let visible = false;
-    showBtn.addEventListener("click", () => {
-      visible = !visible;
-      pwdVal.textContent = visible ? account.password : maskPassword(account.password);
-      showBtn.textContent = visible ? "Hide" : "Show";
-    });
-    pwdWrap.appendChild(pwdVal);
-    pwdWrap.appendChild(showBtn);
-    tdPwd.appendChild(pwdWrap);
-
-    const tdActions = document.createElement("td");
+const tdActions = document.createElement("td");
     tdActions.className = "col-actions";
     const actionsWrap = document.createElement("div");
     actionsWrap.className = "col-actions-inner";
@@ -155,23 +126,21 @@ function renderAccounts(accounts) {
 
     tr.appendChild(tdLabel);
     tr.appendChild(tdEmail);
-    tr.appendChild(tdPwd);
     tr.appendChild(tdActions);
     els.list.appendChild(tr);
   });
 }
 
-els.togglePwd.addEventListener("click", () => {
-  if (els.password.type === "password") {
-    els.password.type = "text";
-    els.togglePwd.textContent = "Hide";
+
+els.addBtn.addEventListener("click", () => {
+  if (els.form.classList.contains("hidden")) {
+    els.form.classList.remove("hidden");
+    els.addBtn.textContent = "✕ Close";
+    els.label.focus();
   } else {
-    els.password.type = "password";
-    els.togglePwd.textContent = "Show";
+    resetForm();
   }
 });
-
-els.cancelBtn.addEventListener("click", resetForm);
 
 els.form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -188,11 +157,6 @@ els.form.addEventListener("submit", async (e) => {
   }
 
   const accounts = await loadAccounts();
-
-  if (!id && accounts.length >= MAX_ACCOUNTS) {
-    setError(`Limit reached (${MAX_ACCOUNTS} accounts max).`);
-    return;
-  }
 
   const duplicate = accounts.find(
     (a) => a.email.toLowerCase() === email.toLowerCase() && a.id !== id,
@@ -248,7 +212,6 @@ els.importFile.addEventListener("change", async (e) => {
 
     const cleaned = data
       .filter((a) => a && typeof a.email === "string" && typeof a.password === "string")
-      .slice(0, MAX_ACCOUNTS)
       .map((a) => ({
         id: a.id || uid(),
         label: typeof a.label === "string" ? a.label : "",

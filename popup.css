@@ -21,7 +21,7 @@ html, body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
-  width: 360px;
+  width: 480px;
 }
 
 header {
@@ -46,14 +46,6 @@ header {
 }
 
 h1 { font-size: 14px; margin: 0; font-weight: 600; }
-
-.counter {
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--panel-2);
-  padding: 3px 8px;
-  border-radius: 999px;
-}
 
 main { padding: 12px 14px; }
 
@@ -95,10 +87,9 @@ main { padding: 12px 14px; }
   font-weight: 500;
 }
 
-.account-table thead th:nth-child(1) { width: 18%; }
-.account-table thead th:nth-child(2) { width: 34%; }
-.account-table thead th:nth-child(3) { width: 28%; }
-.account-table thead th:nth-child(4) { width: 20%; }
+.account-table thead th:nth-child(1) { width: 27%; }
+.account-table thead th:nth-child(2) { width: 48%; }
+.account-table thead th:nth-child(3) { width: 25%; }
 
 .account-table tbody tr {
   border-bottom: 1px solid var(--border);
@@ -136,25 +127,6 @@ main { padding: 12px 14px; }
   color: var(--muted);
 }
 
-.col-password {
-  overflow: visible;
-}
-
-.col-password-inner {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.col-password-inner .pwd-value {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  letter-spacing: 1px;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .col-actions {
   overflow: visible;
 }
@@ -181,28 +153,23 @@ form {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 10px 12px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
 }
 
-form h2 {
-  font-size: 12px;
-  margin: 0 0 8px 0;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
+form h2 { display: none; }
 
 form label {
-  display: block;
-  margin-bottom: 8px;
+  flex: 1;
+  min-width: 80px;
+  margin-bottom: 0;
 }
 
-form label span {
-  display: block;
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 3px;
-}
+form label span { display: none; }
 
 form input[type="text"],
 form input[type="email"],
@@ -223,29 +190,14 @@ form input:focus, form textarea:focus {
   border-color: var(--accent);
 }
 
-.password-row {
-  display: flex;
-  gap: 4px;
-}
-
-.password-row input { flex: 1; }
-
-.icon-btn {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  padding: 0 10px;
-  border-radius: 4px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.icon-btn:hover { color: var(--text); }
 
 .form-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 4px;
+  flex: 0 0 auto;
+}
+
+#formError {
+  flex: 0 0 100%;
+  margin: 2px 0 0 0;
 }
 
 button.primary {
@@ -321,3 +273,16 @@ footer {
   background: var(--panel);
   border-top: 1px solid var(--border);
 }
+
+.add-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.add-btn:hover { background: var(--accent-hover); }

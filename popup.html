@@ -11,34 +11,16 @@
       <div class="logo">PSN</div>
       <h1>Account Manager</h1>
     </div>
-    <div class="counter"><span id="count">0</span>/10</div>
+    <button type="button" id="addBtn" class="add-btn">+ Add</button>
   </header>
 
   <main>
-    <div class="account-list-wrap" id="accountListWrap">
-      <table class="account-table">
-        <thead>
-          <tr>
-            <th>Label</th>
-            <th>Email</th>
-            <th>Password</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="accountList" aria-live="polite"></tbody>
-      </table>
-    </div>
-
-    <p id="emptyState" class="empty-state hidden">
-      No accounts yet. Add your first one below.
-    </p>
-
-    <form id="accountForm" autocomplete="off">
+    <form id="accountForm" class="hidden" autocomplete="off">
       <h2 id="formTitle">Add account</h2>
       <input type="hidden" id="editId" value="" />
 
       <label>
-        <span>Label (optional)</span>
+        <span>PSN ID (optional)</span>
         <input type="text" id="label" placeholder="e.g. Main, Alt, JP store" maxlength="40" />
       </label>
 
@@ -49,19 +31,32 @@
 
       <label>
         <span>Password</span>
-        <div class="password-row">
-          <input type="password" id="password" required maxlength="120" />
-          <button type="button" id="togglePwd" class="icon-btn" title="Show/hide">Show</button>
-        </div>
+        <input type="password" id="password" required maxlength="120" />
       </label>
 
       <div class="form-actions">
         <button type="submit" id="saveBtn" class="primary">Save</button>
-        <button type="button" id="cancelBtn" class="secondary hidden">Cancel</button>
       </div>
 
       <p id="formError" class="error hidden"></p>
     </form>
+
+    <div class="account-list-wrap" id="accountListWrap">
+      <table class="account-table">
+        <thead>
+          <tr>
+            <th>PSN ID</th>
+            <th>Email</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="accountList" aria-live="polite"></tbody>
+      </table>
+    </div>
+
+    <p id="emptyState" class="empty-state hidden">
+      No accounts yet. Add your first one below.
+    </p>
   </main>
 
   <footer>
