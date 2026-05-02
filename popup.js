@@ -85,30 +85,64 @@ function renderAccounts(accounts) {
   accounts.forEach((account) => {
     const tr = document.createElement("tr");
 
-    const tdLabel = document.createElement("td");
-    tdLabel.className = "col-label";
+    // Column 1: Account (PSN ID stacked over email)
+    const tdAccount = document.createElement("td");
+    const idLine = document.createElement("div");
+    idLine.className = "acct-id";
     if (account.label) {
-      tdLabel.textContent = account.label;
+      idLine.textContent = account.label;
     } else {
       const span = document.createElement("span");
       span.className = "untitled";
       span.textContent = "Untitled";
-      tdLabel.appendChild(span);
+      idLine.appendChild(span);
     }
+    const emailLine = document.createElement("div");
+    emailLine.className = "acct-email";
+    emailLine.textContent = account.email;
+    emailLine.title = account.email;
+    tdAccount.appendChild(idLine);
+    tdAccount.appendChild(emailLine);
 
-    const tdEmail = document.createElement("td");
-    tdEmail.className = "col-email";
-    tdEmail.textContent = account.email;
-    tdEmail.title = account.email;
+    // Column 2: Status pill (always Idle until NPSSO fetcher ships)
+    const tdStatus = document.createElement("td");
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = "Idle";
+    tdStatus.appendChild(pill);
 
+    // Column 3: NPSSO Token placeholder
+    const tdToken = document.createElement("td");
+    const tokenSpan = document.createElement("span");
+    tokenSpan.className = "token empty";
+    tokenSpan.textContent = "—";
+    tdToken.appendChild(tokenSpan);
+
+    // Column 4: Last Fetched placeholder
+    const tdFetched = document.createElement("td");
+    const fetchedSpan = document.createElement("span");
+    fetchedSpan.className = "token empty";
+    fetchedSpan.textContent = "Never";
+    tdFetched.appendChild(fetchedSpan);
+
+    // Column 5: Actions (Refresh + Edit + Delete)
     const tdActions = document.createElement("td");
     tdActions.className = "col-actions";
     const actionsWrap = document.createElement("div");
     actionsWrap.className = "col-actions-inner";
+
+    const refreshBtn = document.createElement("button");
+    refreshBtn.type = "button";
+    refreshBtn.textContent = "Refresh";
+    refreshBtn.addEventListener("click", () => {
+      // NPSSO fetcher not implemented yet — placeholder for future work.
+    });
+
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.textContent = "Edit";
     editBtn.addEventListener("click", () => startEdit(account));
+
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "delete";
@@ -120,12 +154,16 @@ function renderAccounts(accounts) {
       await saveAccounts(next);
       renderAccounts(next);
     });
+
+    actionsWrap.appendChild(refreshBtn);
     actionsWrap.appendChild(editBtn);
     actionsWrap.appendChild(deleteBtn);
     tdActions.appendChild(actionsWrap);
 
-    tr.appendChild(tdLabel);
-    tr.appendChild(tdEmail);
+    tr.appendChild(tdAccount);
+    tr.appendChild(tdStatus);
+    tr.appendChild(tdToken);
+    tr.appendChild(tdFetched);
     tr.appendChild(tdActions);
     elements.list.appendChild(tr);
   });

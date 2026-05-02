@@ -49,22 +49,20 @@ header {
 
 h1 { font-size: 14px; margin: 0; font-weight: 600; }
 
-main { padding: 12px 14px; }
+main { padding: 0; }
 
 
 .empty-state {
   text-align: center;
   color: var(--muted);
-  padding: 16px 0;
+  padding: 24px 14px;
   font-style: italic;
-  margin: 0 0 10px 0;
+  margin: 0;
 }
 
 .account-list-wrap {
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
 }
 
 .account-table {
@@ -88,9 +86,11 @@ main { padding: 12px 14px; }
   font-weight: 500;
 }
 
-.account-table thead th:nth-child(1) { width: 27%; }
-.account-table thead th:nth-child(2) { width: 48%; }
-.account-table thead th:nth-child(3) { width: 25%; }
+.account-table thead th:nth-child(1) { width: 26%; }
+.account-table thead th:nth-child(2) { width: 13%; }
+.account-table thead th:nth-child(3) { width: 22%; }
+.account-table thead th:nth-child(4) { width: 17%; }
+.account-table thead th:nth-child(5) { width: 22%; }
 
 .account-table tbody tr {
   border-bottom: 1px solid var(--border);
@@ -112,21 +112,56 @@ main { padding: 12px 14px; }
   white-space: nowrap;
 }
 
-.col-label {
+.acct-id {
   font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
 }
-
-.col-label .untitled {
+.acct-id .untitled {
   color: var(--muted);
   font-weight: 500;
   font-style: italic;
 }
 
-.col-email {
+.acct-email {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   color: var(--muted);
 }
+
+.token {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.token.empty { opacity: 0.6; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.pill.active { color: #4ec162; }
+.pill.active::before {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(46, 160, 67, 0.6);
+}
+.pill.error { color: #ff8c85; }
+.pill.error::before { background: var(--danger); }
 
 .col-actions {
   overflow: visible;
@@ -155,7 +190,7 @@ form {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 8px 10px;
-  margin-bottom: 10px;
+  margin: 12px 14px;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
