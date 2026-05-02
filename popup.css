@@ -264,16 +264,6 @@ footer {
 
 .link-btn.danger:hover { color: var(--danger); }
 
-.warning {
-  margin: 0;
-  padding: 6px 14px 10px 14px;
-  font-size: 10px;
-  color: var(--muted);
-  text-align: center;
-  background: var(--panel);
-  border-top: 1px solid var(--border);
-}
-
 .add-btn {
   background: var(--accent);
   color: white;
