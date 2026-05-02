@@ -11,7 +11,6 @@ const els = {
   label: document.getElementById("label"),
   email: document.getElementById("email"),
   password: document.getElementById("password"),
-  notes: document.getElementById("notes"),
   togglePwd: document.getElementById("togglePwd"),
   saveBtn: document.getElementById("saveBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
@@ -66,7 +65,6 @@ function startEdit(account) {
   els.label.value = account.label || "";
   els.email.value = account.email || "";
   els.password.value = account.password || "";
-  els.notes.value = account.notes || "";
   els.formTitle.textContent = "Edit account";
   els.saveBtn.textContent = "Update";
   els.cancelBtn.classList.remove("hidden");
@@ -224,7 +222,6 @@ els.form.addEventListener("submit", async (e) => {
   const label = els.label.value.trim();
   const email = els.email.value.trim();
   const password = els.password.value;
-  const notes = els.notes.value.trim();
 
   if (!email || !password) {
     setError("Email and password are required.");
@@ -249,12 +246,12 @@ els.form.addEventListener("submit", async (e) => {
   let next;
   if (id) {
     next = accounts.map((a) =>
-      a.id === id ? { ...a, label, email, password, notes, updatedAt: Date.now() } : a,
+      a.id === id ? { ...a, label, email, password, updatedAt: Date.now() } : a,
     );
   } else {
     next = [
       ...accounts,
-      { id: uid(), label, email, password, notes, createdAt: Date.now() },
+      { id: uid(), label, email, password, notes: "", createdAt: Date.now() },
     ];
   }
 
