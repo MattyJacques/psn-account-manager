@@ -100,7 +100,7 @@ function renderAccounts(accounts) {
     tdEmail.textContent = account.email;
     tdEmail.title = account.email;
 
-const tdActions = document.createElement("td");
+    const tdActions = document.createElement("td");
     tdActions.className = "col-actions";
     const actionsWrap = document.createElement("div");
     actionsWrap.className = "col-actions-inner";
