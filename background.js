@@ -14,6 +14,32 @@ async function openSignIn(email) {
       if (btn) btn.click();
     },
   });
+
+  // Stage 2: wait for Sony auth page, fill email, click Next
+  await waitForTabLoad(tab.id, (url) => url && url.includes("my.account.sony.com"));
+
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (emailToFill) => {
+      function tryFill(attemptsLeft) {
+        if (attemptsLeft === 0) return;
+        const input = document.querySelector("input#signin-id");
+        if (!input) {
+          setTimeout(() => tryFill(attemptsLeft - 1), 200);
+          return;
+        }
+        // Use native setter so framework-managed inputs register the change
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
+          .set.call(input, emailToFill);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+
+        const btn = document.querySelector('[data-qa="signin-id#next-button"]');
+        if (btn) btn.click();
+      }
+      tryFill(15); // up to 3 seconds of polling
+    },
+    args: [email],
+  });
 }
 
 function waitForTabLoad(tabId, urlPredicate = null) {
