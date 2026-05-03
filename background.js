@@ -23,7 +23,7 @@ async function openSignIn(email) {
     func: (emailToFill) => {
       function tryFill(attemptsLeft) {
         if (attemptsLeft === 0) return;
-        const input = document.querySelector("input#signin-id");
+        const input = document.querySelector("input#signin-entrance-input-signinId");
         if (!input) {
           setTimeout(() => tryFill(attemptsLeft - 1), 200);
           return;
@@ -33,7 +33,7 @@ async function openSignIn(email) {
           .set.call(input, emailToFill);
         input.dispatchEvent(new Event("input", { bubbles: true }));
 
-        const btn = document.querySelector('[data-qa="signin-id#next-button"]');
+        const btn = document.querySelector("button#signin-entrance-button");
         if (btn) btn.click();
       }
       tryFill(15); // up to 3 seconds of polling
