@@ -15,9 +15,9 @@ async function openSignIn(email) {
     },
   });
 
-  // Stage 2: the sign-in button may open Sony auth in the same tab or a new
-  // popup — watch any tab navigating to my.account.sony.com
-  const authTab = await waitForUrlLoad((url) => url && url.includes("my.account.sony.com"));
+  // Stage 2: the sign-in button may navigate the same tab or open a new
+  // popup/tab — wait for a tab scoped to this session to reach the Sony auth page
+  const authTab = await waitForSonyAuthTab(tab.id);
 
   await chrome.scripting.executeScript({
     target: { tabId: authTab.id },
@@ -44,10 +44,29 @@ async function openSignIn(email) {
   });
 }
 
-// Waits for any tab to reach status "complete" with a URL matching urlPredicate.
-// Returns the full Tab object so the caller knows which tab to inject into.
-function waitForUrlLoad(urlPredicate, TIMEOUT_MS = 30_000) {
+// Waits for the Sony auth page to load in either the original tab (same-tab
+// navigation) or a tab/popup it spawned (tab.openerTabId === openerTabId).
+// Attaches the listener first, then checks already-open tabs, to close the
+// race window between "button clicked" and "listener registered".
+function waitForSonyAuthTab(openerTabId, TIMEOUT_MS = 30_000) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+
+    function isSonyAuthTab(tabId, tab) {
+      return (
+        tab.url &&
+        tab.url.includes("my.account.sony.com") &&
+        (tabId === openerTabId || tab.openerTabId === openerTabId)
+      );
+    }
+
+    function settle(tab) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(tab);
+    }
+
     function cleanup() {
       clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
@@ -55,17 +74,24 @@ function waitForUrlLoad(urlPredicate, TIMEOUT_MS = 30_000) {
 
     function onUpdated(id, changeInfo, tab) {
       if (changeInfo.status !== "complete") return;
-      if (!urlPredicate(tab.url)) return;
-      cleanup();
-      resolve(tab);
+      if (!isSonyAuthTab(id, tab)) return;
+      settle(tab);
     }
 
     const timer = setTimeout(() => {
+      if (settled) return;
       cleanup();
       reject(new Error("Timed out waiting for Sony auth page"));
     }, TIMEOUT_MS);
 
+    // Register listener before querying to avoid missing a fast navigation
     chrome.tabs.onUpdated.addListener(onUpdated);
+
+    // Handle the case where navigation already completed before we were called
+    chrome.tabs.query({}, (tabs) => {
+      const existing = tabs.find((t) => isSonyAuthTab(t.id, t));
+      if (existing) settle(existing);
+    });
   });
 }
 
