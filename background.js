@@ -15,6 +15,8 @@ async function openSignIn(email) {
     },
   });
 
+  if (typeof email !== "string" || email.trim() === "") return;
+
   // Stage 2: the sign-in button may navigate the same tab or open a new
   // popup/tab — wait for a tab scoped to this session to reach the Sony auth page
   const authTab = await waitForSonyAuthTab(tab.id);
