@@ -38,7 +38,6 @@ The entire extension UI is a single popup: `popup.html` + `popup.css` + `popup.j
 - Form state is toggled between "add" and "edit" modes via `startEdit()` / `resetForm()`
 
 **Key limits and constants:**
-- Max 10 accounts (enforced in the add handler)
 - Notes capped at 200 characters
 - Passwords are masked for display using `maskPassword()` (bullet characters); the raw value is only shown on explicit toggle
 
