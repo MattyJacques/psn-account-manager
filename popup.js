@@ -1,21 +1,33 @@
 const STORAGE_KEY = "psn_accounts";
 
-const elements = {
-  list: document.getElementById("accountList"),
-  listWrap: document.getElementById("accountListWrap"),
-  empty: document.getElementById("emptyState"),
-  form: document.getElementById("accountForm"),
-  formTitle: document.getElementById("formTitle"),
-  editId: document.getElementById("editId"),
-  label: document.getElementById("label"),
-  email: document.getElementById("email"),
-  password: document.getElementById("password"),
-  saveBtn: document.getElementById("saveBtn"),
-  addBtn: document.getElementById("addBtn"),
-  refreshAllBtn: document.getElementById("refreshAllBtn"),
-  formError: document.getElementById("formError"),
-  exportBtn: document.getElementById("exportBtn"),
-  importBtn: document.getElementById("importBtn"),
+const AVATAR_GRADIENTS = [
+  ["#a78bfa", "#6366f1"],
+  ["#fb7185", "#e11d48"],
+  ["#38bdf8", "#0284c7"],
+  ["#34d399", "#059669"],
+  ["#fb923c", "#ea580c"],
+  ["#f472b6", "#db2777"],
+  ["#a3e635", "#65a30d"],
+  ["#e879f9", "#a21caf"],
+];
+
+const els = {
+  list:       document.getElementById("accountList"),
+  groupLabel: document.getElementById("groupLabel"),
+  footerStat: document.getElementById("footerStat"),
+  empty:      document.getElementById("emptyState"),
+  form:       document.getElementById("accountForm"),
+  formTitle:  document.getElementById("formTitle"),
+  editId:     document.getElementById("editId"),
+  label:      document.getElementById("label"),
+  email:      document.getElementById("email"),
+  password:   document.getElementById("password"),
+  saveBtn:    document.getElementById("saveBtn"),
+  addBtn:     document.getElementById("addBtn"),
+  cancelBtn:  document.getElementById("cancelBtn"),
+  formError:  document.getElementById("formError"),
+  exportBtn:  document.getElementById("exportBtn"),
+  importBtn:  document.getElementById("importBtn"),
   importFile: document.getElementById("importFile"),
 };
 
@@ -39,114 +51,116 @@ function uid() {
 
 function setError(msg) {
   if (!msg) {
-    elements.formError.classList.add("hidden");
-    elements.formError.textContent = "";
+    els.formError.classList.add("hidden");
+    els.formError.textContent = "";
   } else {
-    elements.formError.textContent = msg;
-    elements.formError.classList.remove("hidden");
+    els.formError.textContent = msg;
+    els.formError.classList.remove("hidden");
   }
 }
 
 function resetForm() {
-  elements.form.reset();
-  elements.editId.value = "";
-  elements.formTitle.textContent = "Add account";
-  elements.saveBtn.textContent = "Save";
+  els.form.reset();
+  els.editId.value = "";
+  els.formTitle.textContent = "New account";
+  els.saveBtn.textContent = "Save";
   setError("");
-  elements.form.classList.add("hidden");
-  elements.addBtn.textContent = "+ Add Account";
+  els.form.classList.add("hidden");
 }
 
 function startEdit(account) {
-  elements.editId.value = account.id;
-  elements.label.value = account.label || "";
-  elements.email.value = account.email || "";
-  elements.password.value = account.password || "";
-  elements.formTitle.textContent = "Edit account";
-  elements.saveBtn.textContent = "Update";
+  els.editId.value = account.id;
+  els.label.value = account.label || "";
+  els.email.value = account.email || "";
+  els.password.value = account.password || "";
+  els.formTitle.textContent = "Edit account";
+  els.saveBtn.textContent = "Update";
   setError("");
-  elements.form.classList.remove("hidden");
-  elements.addBtn.textContent = "✕ Close";
-  elements.label.focus();
-  elements.form.scrollIntoView({ behavior: "smooth", block: "start" });
+  els.form.classList.remove("hidden");
+  els.label.focus();
+  els.form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function avatarStyle(index) {
+  const [a, b] = AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length];
+  return `background: linear-gradient(135deg, ${a}, ${b})`;
+}
+
+function avatarInitial(account) {
+  const src = account.label || account.email;
+  return src.charAt(0).toUpperCase();
+}
+
+const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const SVG_EDIT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+const SVG_DELETE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>`;
+
 function renderAccounts(accounts) {
-  elements.list.innerHTML = "";
+  els.list.innerHTML = "";
 
-  if (accounts.length === 0) {
-    elements.empty.classList.remove("hidden");
-    elements.listWrap.classList.add("hidden");
-  } else {
-    elements.empty.classList.add("hidden");
-    elements.listWrap.classList.remove("hidden");
+  const count = accounts.length;
+  els.groupLabel.textContent = count > 0 ? `Accounts · ${count}` : "";
+  els.footerStat.innerHTML = count > 0 ? `<strong>${count}</strong> account${count !== 1 ? "s" : ""}` : "";
+
+  if (count === 0) {
+    els.empty.classList.remove("hidden");
+    return;
   }
+  els.empty.classList.add("hidden");
 
-  accounts.forEach((account) => {
-    const tr = document.createElement("tr");
+  accounts.forEach((account, index) => {
+    const row = document.createElement("div");
+    row.className = "row";
 
-    // Column 1: Account (PSN ID stacked over email)
-    const tdAccount = document.createElement("td");
-    const idLine = document.createElement("div");
-    idLine.className = "acct-id";
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.style.cssText = avatarStyle(index);
+    avatar.textContent = avatarInitial(account);
+
+    const info = document.createElement("div");
+    info.className = "row-info";
+
+    const labelEl = document.createElement("span");
     if (account.label) {
-      idLine.textContent = account.label;
+      labelEl.className = "row-label";
+      labelEl.textContent = account.label;
     } else {
-      const span = document.createElement("span");
-      span.className = "untitled";
-      span.textContent = "Untitled";
-      idLine.appendChild(span);
+      labelEl.className = "row-label untitled";
+      labelEl.textContent = "Untitled";
     }
-    const emailLine = document.createElement("div");
-    emailLine.className = "acct-email";
-    emailLine.textContent = account.email;
-    emailLine.title = account.email;
-    tdAccount.appendChild(idLine);
-    tdAccount.appendChild(emailLine);
 
-    // Column 2: Status pill (always Idle until NPSSO fetcher ships)
-    const tdStatus = document.createElement("td");
-    const pill = document.createElement("span");
-    pill.className = "pill";
-    pill.textContent = "Idle";
-    tdStatus.appendChild(pill);
+    const emailEl = document.createElement("span");
+    emailEl.className = "row-email";
+    emailEl.textContent = account.email;
+    emailEl.title = account.email;
 
-    // Column 3: NPSSO Token placeholder
-    const tdToken = document.createElement("td");
-    const tokenSpan = document.createElement("span");
-    tokenSpan.className = "token empty";
-    tokenSpan.textContent = "—";
-    tdToken.appendChild(tokenSpan);
+    info.appendChild(labelEl);
+    info.appendChild(emailEl);
 
-    // Column 4: Last Fetched placeholder
-    const tdFetched = document.createElement("td");
-    const fetchedSpan = document.createElement("span");
-    fetchedSpan.className = "token empty";
-    fetchedSpan.textContent = "Never";
-    tdFetched.appendChild(fetchedSpan);
+    const actions = document.createElement("div");
+    actions.className = "row-actions";
 
-    // Column 5: Actions (Refresh + Edit + Delete)
-    const tdActions = document.createElement("td");
-    tdActions.className = "col-actions";
-    const actionsWrap = document.createElement("div");
-    actionsWrap.className = "col-actions-inner";
-
-    const refreshBtn = document.createElement("button");
-    refreshBtn.type = "button";
-    refreshBtn.textContent = "Refresh";
-    refreshBtn.addEventListener("click", () => {
-      // NPSSO fetcher not implemented yet — placeholder for future work.
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "qa-btn";
+    copyBtn.title = "Copy email";
+    copyBtn.innerHTML = SVG_COPY;
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(account.email);
     });
 
     const editBtn = document.createElement("button");
     editBtn.type = "button";
-    editBtn.textContent = "Edit";
+    editBtn.className = "qa-btn";
+    editBtn.title = "Edit";
+    editBtn.innerHTML = SVG_EDIT;
     editBtn.addEventListener("click", () => startEdit(account));
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
-    deleteBtn.className = "delete";
-    deleteBtn.textContent = "Delete";
+    deleteBtn.className = "qa-btn danger";
+    deleteBtn.title = "Delete";
+    deleteBtn.innerHTML = SVG_DELETE;
     deleteBtn.addEventListener("click", async () => {
       if (!confirm(`Delete account "${account.label || account.email}"?`)) return;
       const all = await loadAccounts();
@@ -155,43 +169,36 @@ function renderAccounts(accounts) {
       renderAccounts(next);
     });
 
-    actionsWrap.appendChild(refreshBtn);
-    actionsWrap.appendChild(editBtn);
-    actionsWrap.appendChild(deleteBtn);
-    tdActions.appendChild(actionsWrap);
+    actions.appendChild(copyBtn);
+    actions.appendChild(editBtn);
+    actions.appendChild(deleteBtn);
 
-    tr.appendChild(tdAccount);
-    tr.appendChild(tdStatus);
-    tr.appendChild(tdToken);
-    tr.appendChild(tdFetched);
-    tr.appendChild(tdActions);
-    elements.list.appendChild(tr);
+    row.appendChild(avatar);
+    row.appendChild(info);
+    row.appendChild(actions);
+    els.list.appendChild(row);
   });
 }
 
-
-elements.addBtn.addEventListener("click", () => {
-  if (elements.form.classList.contains("hidden")) {
-    elements.form.classList.remove("hidden");
-    elements.addBtn.textContent = "✕ Close";
-    elements.label.focus();
+els.addBtn.addEventListener("click", () => {
+  if (els.form.classList.contains("hidden")) {
+    els.form.classList.remove("hidden");
+    els.label.focus();
   } else {
     resetForm();
   }
 });
 
-elements.refreshAllBtn.addEventListener("click", () => {
-  // NPSSO fetcher not implemented yet — placeholder for future work.
-});
+els.cancelBtn.addEventListener("click", resetForm);
 
-elements.form.addEventListener("submit", async (e) => {
+els.form.addEventListener("submit", async (e) => {
   e.preventDefault();
   setError("");
 
-  const id = elements.editId.value;
-  const label = elements.label.value.trim();
-  const email = elements.email.value.trim();
-  const password = elements.password.value;
+  const id = els.editId.value;
+  const label = els.label.value.trim();
+  const email = els.email.value.trim();
+  const password = els.password.value;
 
   if (!email || !password) {
     setError("Email and password are required.");
@@ -225,7 +232,7 @@ elements.form.addEventListener("submit", async (e) => {
   renderAccounts(next);
 });
 
-elements.exportBtn.addEventListener("click", async () => {
+els.exportBtn.addEventListener("click", async () => {
   const accounts = await loadAccounts();
   if (accounts.length === 0) {
     alert("Nothing to export.");
@@ -242,9 +249,9 @@ elements.exportBtn.addEventListener("click", async () => {
   URL.revokeObjectURL(url);
 });
 
-elements.importBtn.addEventListener("click", () => elements.importFile.click());
+els.importBtn.addEventListener("click", () => els.importFile.click());
 
-elements.importFile.addEventListener("change", async (e) => {
+els.importFile.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
