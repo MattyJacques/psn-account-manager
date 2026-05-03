@@ -215,7 +215,8 @@ header {
   cursor: default;
   transition: background 0.08s;
 }
-.row:hover { background: var(--surface); }
+.row:hover,
+.row:focus-within { background: var(--surface); }
 
 .avatar {
   width: 28px;
@@ -253,7 +254,8 @@ header {
   opacity: 0;
   transition: opacity 0.1s;
 }
-.row:hover .row-actions { opacity: 1; }
+.row:hover .row-actions,
+.row:focus-within .row-actions { opacity: 1; }
 
 .qa-btn {
   width: 26px;
@@ -268,7 +270,14 @@ header {
   padding: 0;
 }
 .qa-btn:hover { background: var(--surface-hover); color: var(--text); }
+.qa-btn:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--text);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
 .qa-btn.danger:hover { color: var(--danger-text); }
+.qa-btn.danger:focus-visible { color: var(--danger-text); }
 .qa-btn svg { width: 13px; height: 13px; }
 
 .empty-state {

@@ -1,4 +1,5 @@
 const STORAGE_KEY = "psn_accounts";
+const MAX_ACCOUNTS = 10;
 
 const AVATAR_GRADIENTS = [
   ["#a78bfa", "#6366f1"],
@@ -206,6 +207,11 @@ els.form.addEventListener("submit", async (e) => {
   }
 
   const accounts = await loadAccounts();
+
+  if (!id && accounts.length >= MAX_ACCOUNTS) {
+    setError(`You can store up to ${MAX_ACCOUNTS} accounts.`);
+    return;
+  }
 
   const duplicate = accounts.find(
     (a) => a.email.toLowerCase() === email.toLowerCase() && a.id !== id,
