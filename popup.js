@@ -173,7 +173,7 @@ function renderAccounts(accounts) {
     const fetchBtn = document.createElement("button");
     fetchBtn.type = "button";
     fetchBtn.className = "qa-btn";
-    fetchBtn.title = "Open my.playstation.com";
+    fetchBtn.title = "Sign in to PSN";
     fetchBtn.innerHTML = SVG_OPEN;
     fetchBtn.addEventListener("click", () => {
       chrome.runtime.sendMessage({ action: "openSignIn" });
