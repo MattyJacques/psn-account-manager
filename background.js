@@ -1,5 +1,5 @@
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "openSignIn") openSignIn();
+  if (msg.action === "openSignIn") openSignIn().catch(console.error);
 });
 
 async function openSignIn() {
