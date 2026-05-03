@@ -1,6 +1,6 @@
 # PSN Account Manager
 
-A small Chrome / Brave extension to keep track of up to **10** PlayStation Network accounts (email, password, optional label and notes).
+A small Chrome / Brave extension to keep track of PlayStation Network accounts (email, password, optional label and notes).
 
 ## Install (developer mode)
 
@@ -11,7 +11,7 @@ A small Chrome / Brave extension to keep track of up to **10** PlayStation Netwo
 
 ## Features
 
-- Add, edit, delete accounts (max 10).
+- Add, edit, delete accounts.
 - Optional label + notes per account.
 - Show / hide passwords; one-click copy for email and password.
 - Export to JSON, import from JSON, clear-all.

@@ -34,12 +34,10 @@ The entire extension UI is a single popup: `popup.html` + `popup.css` + `popup.j
 
 **DOM pattern:**
 - `els` object caches all static DOM references at startup
-- Dynamic account rows are built with `createElement()` calls inside `renderAccounts()`
+- Dynamic account rows are `div.row` elements built in `renderAccounts()` — no table
+- Each row has an avatar (gradient circle with initial), label + email, and hover-reveal icon buttons (copy email, edit, delete)
 - Form state is toggled between "add" and "edit" modes via `startEdit()` / `resetForm()`
-
-**Key limits and constants:**
-- Notes capped at 200 characters
-- Passwords are masked for display using `maskPassword()` (bullet characters); the raw value is only shown on explicit toggle
+- The form has its own cancel button (`#cancelBtn`); the `#addBtn` header button also closes the form if already open
 
 ## Permissions
 

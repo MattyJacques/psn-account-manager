@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PSN Account Manager",
   "version": "1.0.0",
-  "description": "Keep track of your PlayStation Network accounts (up to 10).",
+  "description": "Keep track of your PlayStation Network accounts.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "PSN Account Manager",
