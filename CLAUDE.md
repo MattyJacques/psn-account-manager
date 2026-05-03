@@ -35,7 +35,8 @@ The entire extension UI is a single popup: `popup.html` + `popup.css` + `popup.j
 **DOM pattern:**
 - `els` object caches all static DOM references at startup
 - Dynamic account rows are `div.row` elements built in `renderAccounts()` — no table
-- Each row has an avatar (gradient circle with initial), label + email, and hover-reveal icon buttons (copy email, edit, delete)
+- Each row has an avatar (gradient circle with initial), label + email, and icon buttons: fetch (first), copy email, edit, delete
+- The fetch button opens `https://my.account.sony.com/sonyacct/signin/` in a new tab — this is the Sony auth page reached by clicking "Sign In" on `www.playstation.com`. Dynamic OAuth params (`duid`, `state`, `cid`) are omitted intentionally; the page loads a clean sign-in form without them
 - Form state is toggled between "add" and "edit" modes via `startEdit()` / `resetForm()`
 - The form has its own cancel button (`#cancelBtn`); the `#addBtn` header button also closes the form if already open
 
