@@ -176,7 +176,7 @@ function renderAccounts(accounts) {
     fetchBtn.title = "Open my.playstation.com";
     fetchBtn.innerHTML = SVG_OPEN;
     fetchBtn.addEventListener("click", () => {
-      window.open("https://my.account.sony.com/sonyacct/signin/", "_blank");
+      chrome.runtime.sendMessage({ action: "openSignIn" });
     });
 
     actions.appendChild(fetchBtn);

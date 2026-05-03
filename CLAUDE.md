@@ -18,7 +18,9 @@ There are no build commands, tests, or linters configured.
 
 ## Architecture
 
-The entire extension UI is a single popup: `popup.html` + `popup.css` + `popup.js`. There is no background service worker.
+The extension has two entry points:
+- **Popup:** `popup.html` + `popup.css` + `popup.js` — all UI and account management
+- **Background service worker:** `background.js` — handles the `openSignIn` message from the popup; creates a tab navigating to `https://www.playstation.com/en-gb/`, waits for it to fully load, then injects a script to click the sign-in button (`[data-qa="web-toolbar#signin-button"]`)
 
 **Data flow:**
 - All state lives in `chrome.storage.local` under the key `"psn_accounts"` as a JSON array
@@ -42,4 +44,9 @@ The entire extension UI is a single popup: `popup.html` + `popup.css` + `popup.j
 
 ## Permissions
 
-`manifest.json` declares `storage` and `clipboardWrite`. Do not add `clipboardRead`, `tabs`, `activeTab`, or broad host permissions unless strictly required — keep the permission surface minimal.
+`manifest.json` declares:
+- `storage`, `clipboardWrite` — core popup features
+- `tabs`, `scripting` — required for the background service worker to create a tab and inject the sign-in click
+- host permission `https://www.playstation.com/*` — required for `scripting.executeScript()` to run on that domain
+
+Do not add `clipboardRead`, `activeTab`, or broader host permissions — keep the surface minimal.
