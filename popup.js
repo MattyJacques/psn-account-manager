@@ -176,7 +176,7 @@ function renderAccounts(accounts) {
     fetchBtn.title = "Sign in to PSN";
     fetchBtn.innerHTML = SVG_OPEN;
     fetchBtn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "openSignIn", email: account.email });
+      chrome.runtime.sendMessage({ action: "openSignIn", email: account.email, password: account.password });
     });
 
     actions.appendChild(fetchBtn);
