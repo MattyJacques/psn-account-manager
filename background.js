@@ -1,8 +1,8 @@
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "openSignIn") openSignIn(msg.email).catch(console.error);
+  if (msg.action === "openSignIn") openSignIn(msg.email, msg.password).catch(console.error);
 });
 
-async function openSignIn(email) {
+async function openSignIn(email, password) {
   const tab = await chrome.tabs.create({ url: "https://www.playstation.com/en-gb/" });
 
   await waitForTabLoad(tab.id);
@@ -23,26 +23,53 @@ async function openSignIn(email) {
 
   await chrome.scripting.executeScript({
     target: { tabId: authTab.id },
-    func: (emailToFill) => {
-      function tryFill(attemptsLeft) {
+    func: (emailToFill, passwordToFill) => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+
+      function fillInput(input, value) {
+        nativeSetter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      function tryPasswordClick(attemptsLeft) {
+        if (attemptsLeft === 0) return;
+        const btn = document.querySelector("button#signin-password-button");
+        if (!btn || btn.getAttribute("aria-disabled") === "true") {
+          setTimeout(() => tryPasswordClick(attemptsLeft - 1), 100);
+          return;
+        }
+        btn.click();
+      }
+
+      function tryPassword(attemptsLeft) {
+        if (attemptsLeft === 0) return;
+        const input = document.querySelector("input#signin-password-input-password");
+        if (!input) {
+          setTimeout(() => tryPassword(attemptsLeft - 1), 200);
+          return;
+        }
+        fillInput(input, passwordToFill);
+        tryPasswordClick(20); // wait up to 2 s for React to enable the button
+      }
+
+      function tryEmail(attemptsLeft) {
         if (attemptsLeft === 0) return;
         const input = document.querySelector("input#signin-entrance-input-signinId");
         if (!input) {
-          setTimeout(() => tryFill(attemptsLeft - 1), 200);
+          setTimeout(() => tryEmail(attemptsLeft - 1), 200);
           return;
         }
-        // Native setter + both events required for React-controlled inputs
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
-          .set.call(input, emailToFill);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-
+        fillInput(input, emailToFill);
         const btn = document.querySelector("button#signin-entrance-button");
         if (btn) btn.click();
+
+        if (passwordToFill) tryPassword(25); // poll up to 5 s for SPA to swap to password step
       }
-      tryFill(15); // poll up to 3 s for SPA render
+
+      tryEmail(15); // poll up to 3 s for SPA render
     },
-    args: [email],
+    args: [email, password ?? null],
   });
 }
 
