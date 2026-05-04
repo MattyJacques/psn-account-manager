@@ -20,7 +20,7 @@ There are no build commands, tests, or linters configured.
 
 The extension has two entry points:
 - **Popup:** `popup.html` + `popup.css` + `popup.js` — all UI and account management
-- **Background service worker:** `background.js` — handles the `openSignIn` message from the popup; creates a tab navigating to `https://www.playstation.com/en-gb/`, waits for it to fully load, then injects a script to click the sign-in button (`[data-qa="web-toolbar#signin-button"]`)
+- **Background service worker:** `background.js` — handles the `openSignIn` message from the popup; creates a tab navigating to `https://www.playstation.com/en-gb/`, waits for it to fully load, clicks the sign-in button (`[data-qa="web-toolbar#signin-button"]`), then waits for the Sony auth tab (`my.account.sony.com`) to open and injects a script that fills the email field, clicks the email-submit button, waits for the SPA to swap to the password step, fills the password field, and clicks the password-submit button
 
 **Data flow:**
 - All state lives in `chrome.storage.local` under the key `"psn_accounts"` as a JSON array
@@ -38,7 +38,7 @@ The extension has two entry points:
 - `els` object caches all static DOM references at startup
 - Dynamic account rows are `div.row` elements built in `renderAccounts()` — no table
 - Each row has an avatar (gradient circle with initial), label + email, and icon buttons: fetch (first), copy email, edit, delete
-- The fetch button sends `{action: "openSignIn"}` to the background service worker, which opens `www.playstation.com/en-gb/` and programmatically clicks the sign-in button — this preserves all OAuth params that a direct URL to the Sony auth page cannot replicate
+- The fetch button sends `{action: "openSignIn", email, password}` to the background service worker, which opens `www.playstation.com/en-gb/` and programmatically drives the full sign-in flow (email entry → password entry → submit) — opening via the PlayStation homepage preserves all OAuth params that a direct URL to the Sony auth page cannot replicate. **The stored password is passed to the background worker and injected directly into the Sony auth page via `scripting.executeScript()`.**
 - Form state is toggled between "add" and "edit" modes via `startEdit()` / `resetForm()`
 - The form has its own cancel button (`#cancelBtn`); the `#addBtn` header button also closes the form if already open
 
@@ -46,7 +46,8 @@ The extension has two entry points:
 
 `manifest.json` declares:
 - `storage`, `clipboardWrite` — core popup features
-- `tabs`, `scripting` — required for the background service worker to create a tab and inject the sign-in click
-- host permission `https://www.playstation.com/*` — required for `scripting.executeScript()` to run on that domain
+- `tabs`, `scripting` — required for the background service worker to create a tab and inject the sign-in automation
+- host permission `https://www.playstation.com/*` — required for `scripting.executeScript()` to click the sign-in button on the PlayStation homepage
+- host permission `https://my.account.sony.com/*` — required for `scripting.executeScript()` to fill credentials on the Sony auth page
 
 Do not add `clipboardRead`, `activeTab`, or broader host permissions — keep the surface minimal.
