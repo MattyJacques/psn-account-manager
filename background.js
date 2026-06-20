@@ -10,8 +10,21 @@ async function openSignIn(email, password) {
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: () => {
-      const btn = document.querySelector('[data-qa="web-toolbar#signin-button"]');
-      if (btn) btn.click();
+      function tryClickSignIn(attemptsLeft) {
+        if (attemptsLeft === 0) return;
+        // data-qa is the most stable hook, but Sony renames its container path
+        // (e.g. "web-toolbar#profile-container#signin-button"), so match by
+        // suffix and fall back to the toolbar's sign-in button class.
+        const btn =
+          document.querySelector('[data-qa$="signin-button"]') ||
+          document.querySelector("button.web-toolbar__signin-button");
+        if (!btn) {
+          setTimeout(() => tryClickSignIn(attemptsLeft - 1), 200);
+          return;
+        }
+        btn.click();
+      }
+      tryClickSignIn(25); // poll up to 5 s for the SPA toolbar to mount
     },
   });
 
