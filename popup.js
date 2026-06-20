@@ -130,13 +130,26 @@ function renderAccounts(accounts) {
       labelEl.textContent = "Untitled";
     }
 
-    const emailEl = document.createElement("span");
-    emailEl.className = "row-email";
-    emailEl.textContent = account.email;
-    emailEl.title = account.email;
+    const psnIdEl = document.createElement("span");
+    if (account.onlineId) {
+      psnIdEl.className = "row-psnid";
+      psnIdEl.textContent = `PSNID: ${account.onlineId}`;
+      psnIdEl.title = account.onlineId;
+    } else {
+      psnIdEl.className = "row-psnid muted";
+      psnIdEl.textContent = "No PSNID yet";
+    }
 
     info.appendChild(labelEl);
-    info.appendChild(emailEl);
+    info.appendChild(psnIdEl);
+
+    if (account.accountId) {
+      const accountIdEl = document.createElement("span");
+      accountIdEl.className = "row-accountid";
+      accountIdEl.textContent = account.accountId;
+      accountIdEl.title = `Account ID: ${account.accountId}`;
+      info.appendChild(accountIdEl);
+    }
 
     const actions = document.createElement("div");
     actions.className = "row-actions";
@@ -176,7 +189,7 @@ function renderAccounts(accounts) {
     fetchBtn.title = "Sign in to PSN";
     fetchBtn.innerHTML = SVG_OPEN;
     fetchBtn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "openSignIn", email: account.email, password: account.password });
+      chrome.runtime.sendMessage({ action: "openSignIn", id: account.id, email: account.email, password: account.password });
     });
 
     actions.appendChild(fetchBtn);
@@ -279,6 +292,9 @@ els.importFile.addEventListener("change", async (e) => {
         password: a.password,
         notes: typeof a.notes === "string" ? a.notes : "",
         createdAt: a.createdAt || Date.now(),
+        ...(typeof a.accountId === "string" ? { accountId: a.accountId } : {}),
+        ...(typeof a.onlineId === "string" ? { onlineId: a.onlineId } : {}),
+        ...(typeof a.profileFetchedAt === "number" ? { profileFetchedAt: a.profileFetchedAt } : {}),
       }));
 
     if (!confirm(`Replace existing accounts with ${cleaned.length} imported account(s)?`)) {
@@ -291,6 +307,12 @@ els.importFile.addEventListener("change", async (e) => {
     alert("Import failed: " + err.message);
   }
   e.target.value = "";
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[STORAGE_KEY]) {
+    renderAccounts(Array.isArray(changes[STORAGE_KEY].newValue) ? changes[STORAGE_KEY].newValue : []);
+  }
 });
 
 (async function init() {
