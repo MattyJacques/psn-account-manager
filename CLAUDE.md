@@ -20,7 +20,7 @@ There are no build commands, tests, or linters configured.
 
 The extension has two entry points:
 - **Popup:** `popup.html` + `popup.css` + `popup.js` — all UI and account management
-- **Background service worker:** `background.js` — handles the `openSignIn` message from the popup; creates a tab navigating to `https://www.playstation.com/en-gb/`, waits for it to fully load, clicks the sign-in button (`[data-qa="web-toolbar#signin-button"]`), then waits for the Sony auth tab (`my.account.sony.com`) to open and injects a script that fills the email field, clicks the email-submit button, waits for the SPA to swap to the password step, fills the password field, and clicks the password-submit button
+- **Background service worker:** `background.js` — handles the `openSignIn` message from the popup; creates a tab navigating to `https://www.playstation.com/en-gb/`, waits for it to fully load, polls for and clicks the sign-in button (matched by `[data-qa$="signin-button"]` with a `button.web-toolbar__signin-button` fallback, since Sony periodically renames the `data-qa` container path), then waits for the Sony auth tab (`my.account.sony.com`) to open and injects a script that fills the email field, clicks the email-submit button, waits for the SPA to swap to the password step, fills the password field, and clicks the password-submit button
 
 **Data flow:**
 - All state lives in `chrome.storage.local` under the key `"psn_accounts"` as a JSON array
