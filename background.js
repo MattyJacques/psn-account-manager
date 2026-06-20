@@ -1,8 +1,102 @@
+const STORAGE_KEY = "psn_accounts";
+
+const INTERCEPTOR_SCRIPTS = [
+  {
+    id: "psn-interceptor-main",
+    js: ["interceptor.js"],
+    matches: ["https://www.playstation.com/*"],
+    runAt: "document_start",
+    world: "MAIN",
+    persistAcrossSessions: false,
+  },
+  {
+    id: "psn-interceptor-relay",
+    js: ["interceptor-relay.js"],
+    matches: ["https://www.playstation.com/*"],
+    runAt: "document_start",
+    world: "ISOLATED",
+    persistAcrossSessions: false,
+  },
+];
+const INTERCEPTOR_IDS = INTERCEPTOR_SCRIPTS.map((s) => s.id);
+const CAPTURE_TIMEOUT_MS = 90_000;
+
+// Tracks the account whose sign-in is in flight, so a captured profile can
+// be matched to it. Only one sign-in is driven at a time.
+let pendingAccountId = null;
+let captureTimer = null;
+
+function loadAccounts() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([STORAGE_KEY], (result) => {
+      resolve(Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : []);
+    });
+  });
+}
+
+function saveAccounts(accounts) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [STORAGE_KEY]: accounts }, resolve);
+  });
+}
+
+async function startCapture(accountId) {
+  pendingAccountId = accountId ?? null;
+  clearTimeout(captureTimer);
+  if (!pendingAccountId) return;
+  try {
+    await chrome.scripting.unregisterContentScripts({ ids: INTERCEPTOR_IDS });
+  } catch {}
+  try {
+    await chrome.scripting.registerContentScripts(INTERCEPTOR_SCRIPTS);
+  } catch (e) {
+    console.error("Failed to register interceptor", e);
+  }
+  captureTimer = setTimeout(stopCapture, CAPTURE_TIMEOUT_MS);
+}
+
+async function stopCapture() {
+  pendingAccountId = null;
+  clearTimeout(captureTimer);
+  captureTimer = null;
+  try {
+    await chrome.scripting.unregisterContentScripts({ ids: INTERCEPTOR_IDS });
+  } catch {}
+}
+
+async function handleProfileCaptured({ accountId, onlineId }) {
+  if (!pendingAccountId) return;
+  const id = pendingAccountId;
+  const accounts = await loadAccounts();
+  let changed = false;
+  const next = accounts.map((a) => {
+    if (a.id !== id) return a;
+    changed = true;
+    return {
+      ...a,
+      accountId: accountId ?? a.accountId,
+      onlineId: onlineId ?? a.onlineId,
+      profileFetchedAt: Date.now(),
+    };
+  });
+  if (changed) await saveAccounts(next);
+  await stopCapture();
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "openSignIn") openSignIn(msg.email, msg.password).catch(console.error);
+  if (msg.action === "openSignIn") {
+    openSignIn(msg.email, msg.password, msg.id).catch(console.error);
+  } else if (msg.action === "psnProfileCaptured") {
+    handleProfileCaptured(msg).catch(console.error);
+  }
 });
 
-async function openSignIn(email, password) {
+async function openSignIn(email, password, accountId) {
+  // Register the interceptor BEFORE the tab navigates, so its
+  // document_start scripts are in place for the homepage load that follows
+  // the Sony redirect.
+  await startCapture(accountId);
+
   const tab = await chrome.tabs.create({ url: "https://www.playstation.com/en-gb/" });
 
   await waitForTabLoad(tab.id);
