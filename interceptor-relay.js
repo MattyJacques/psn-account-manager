@@ -5,9 +5,12 @@ window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const data = event.data;
   if (!data || data.source !== "psn-am") return;
-  chrome.runtime.sendMessage({
-    action: "psnProfileCaptured",
-    accountId: data.accountId ?? null,
-    onlineId: data.onlineId ?? null,
-  });
+  chrome.runtime.sendMessage(
+    {
+      action: "psnProfileCaptured",
+      accountId: data.accountId ?? null,
+      onlineId: data.onlineId ?? null,
+    },
+    () => void chrome.runtime.lastError
+  );
 });

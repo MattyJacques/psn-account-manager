@@ -46,6 +46,7 @@
 
   function urlOf(input) {
     if (typeof input === "string") return input;
+    if (input instanceof URL) return input.href;
     if (input && typeof input.url === "string") return input.url;
     return "";
   }
