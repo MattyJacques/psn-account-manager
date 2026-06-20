@@ -230,7 +230,7 @@ header {
   flex-shrink: 0;
 }
 
-.row-info { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.row-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 
 .row-label {
   font-weight: 500;
@@ -243,6 +243,24 @@ header {
 .row-email {
   color: var(--muted);
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-psnid {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-psnid.muted { color: var(--dim); font-style: italic; }
+
+.row-accountid {
+  color: var(--dim);
+  font-size: 10.5px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
