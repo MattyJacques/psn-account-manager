@@ -50,6 +50,8 @@ async function startCapture(accountId) {
   try {
     await chrome.scripting.registerContentScripts(INTERCEPTOR_SCRIPTS);
   } catch (e) {
+    // If registration fails we log and let the sign-in proceed; the user
+    // simply gets no profile capture. State is cleaned up later by the timeout.
     console.error("Failed to register interceptor", e);
   }
   captureTimer = setTimeout(stopCapture, CAPTURE_TIMEOUT_MS);
@@ -65,7 +67,11 @@ async function stopCapture() {
 }
 
 async function handleProfileCaptured({ accountId, onlineId }) {
+  // A psnProfileCaptured message can arrive after the 90s timeout already
+  // ran stopCapture; in that case there is nothing pending, so we return.
   if (!pendingAccountId) return;
+  // Match the captured profile to the account by the stored row id
+  // (pendingAccountId), NOT by the Sony accountId value in the payload.
   const id = pendingAccountId;
   const accounts = await loadAccounts();
   let changed = false;
