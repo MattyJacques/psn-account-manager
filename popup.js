@@ -157,11 +157,16 @@ function renderAccounts(accounts) {
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "qa-btn";
-    copyBtn.title = "Copy email";
     copyBtn.innerHTML = SVG_COPY;
-    copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(account.email);
-    });
+    if (account.npsso) {
+      copyBtn.title = "Copy NPSSO";
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(account.npsso);
+      });
+    } else {
+      copyBtn.title = "No NPSSO token yet";
+      copyBtn.disabled = true;
+    }
 
     const editBtn = document.createElement("button");
     editBtn.type = "button";
@@ -295,6 +300,8 @@ els.importFile.addEventListener("change", async (e) => {
         ...(typeof a.accountId === "string" ? { accountId: a.accountId } : {}),
         ...(typeof a.onlineId === "string" ? { onlineId: a.onlineId } : {}),
         ...(typeof a.profileFetchedAt === "number" ? { profileFetchedAt: a.profileFetchedAt } : {}),
+        ...(typeof a.npsso === "string" ? { npsso: a.npsso } : {}),
+        ...(typeof a.npssoFetchedAt === "number" ? { npssoFetchedAt: a.npssoFetchedAt } : {}),
       }));
 
     if (!confirm(`Replace existing accounts with ${cleaned.length} imported account(s)?`)) {

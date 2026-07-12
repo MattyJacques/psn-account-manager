@@ -296,6 +296,11 @@ header {
 }
 .qa-btn.danger:hover { color: var(--danger-text); }
 .qa-btn.danger:focus-visible { color: var(--danger-text); }
+.qa-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.qa-btn:disabled:hover { background: transparent; color: var(--muted); }
 .qa-btn svg { width: 13px; height: 13px; }
 
 .empty-state {

@@ -66,13 +66,73 @@ async function stopCapture() {
   } catch {}
 }
 
-async function handleProfileCaptured({ accountId, onlineId }) {
+// Retrieves the account's NPSSO token from the Sony SSO cookie endpoint.
+//
+// This must NOT be a plain fetch() from the service worker: the worker uses the
+// default (non-incognito) cookie store — the manifest's default "spanning"
+// incognito mode gives one shared worker — so when the user signs in inside a
+// private window, a worker fetch reads a DIFFERENT account's Sony session and
+// returns a stale token. It also cannot be an injected fetch from the
+// playstation.com tab, because playstation.com and account.sony.com are
+// different sites, so SameSite would strip the Sony cookies.
+//
+// Instead we open the endpoint as a top-level navigation in a background tab in
+// the SAME window as the sign-in (openerTabId's window). That tab inherits the
+// sign-in window's cookie store (correct account, even in a private window) and
+// a top-level GET sends the SameSite Sony cookies — exactly replicating the
+// working manual method (visiting the URL in the browser). We read the JSON
+// back and close the tab. Returns the token string, or null on any failure —
+// this never throws, so a token miss cannot break profile capture.
+async function fetchNpsso(openerTabId) {
+  if (openerTabId == null) return null;
+  let tabId = null;
+  try {
+    const opener = await chrome.tabs.get(openerTabId);
+    const tab = await chrome.tabs.create({
+      windowId: opener.windowId,
+      url: "https://ca.account.sony.com/api/v1/ssocookie",
+      active: false,
+    });
+    tabId = tab.id;
+    // Give the small JSON response time to load. A fixed delay avoids a race
+    // where waitForTabLoad would attach its listener after "complete" fired.
+    await new Promise((r) => setTimeout(r, 1500));
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        try {
+          return document.body.innerText;
+        } catch {
+          return null;
+        }
+      },
+    });
+    const json = JSON.parse(injection?.result ?? "");
+    return typeof json.npsso === "string" && json.npsso ? json.npsso : null;
+  } catch (e) {
+    console.error("Failed to fetch NPSSO", e);
+    return null;
+  } finally {
+    if (tabId != null) {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch {}
+    }
+  }
+}
+
+async function handleProfileCaptured({ accountId, onlineId }, tabId) {
   // A psnProfileCaptured message can arrive after the 90s timeout already
   // ran stopCapture; in that case there is nothing pending, so we return.
   if (!pendingAccountId) return;
   // Match the captured profile to the account by the stored row id
   // (pendingAccountId), NOT by the Sony accountId value in the payload.
   const id = pendingAccountId;
+  // The session is confirmed live at this point, so fetch the NPSSO token in
+  // the same pass and persist it alongside the profile fields. tabId is the
+  // signed-in playstation.com tab — used only to locate its window, so the
+  // token is read from the correct (possibly private) cookie store.
+  const npsso = await fetchNpsso(tabId);
   const accounts = await loadAccounts();
   let changed = false;
   const next = accounts.map((a) => {
@@ -83,26 +143,24 @@ async function handleProfileCaptured({ accountId, onlineId }) {
       accountId: accountId ?? a.accountId,
       onlineId: onlineId ?? a.onlineId,
       profileFetchedAt: Date.now(),
+      ...(npsso ? { npsso, npssoFetchedAt: Date.now() } : {}),
     };
   });
   if (changed) await saveAccounts(next);
   await stopCapture();
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.action === "openSignIn") {
     openSignIn(msg.email, msg.password, msg.id).catch(console.error);
   } else if (msg.action === "psnProfileCaptured") {
-    handleProfileCaptured(msg).catch(console.error);
+    // sender.tab is the playstation.com tab that relayed the capture; its
+    // window determines which cookie store the NPSSO token is read from.
+    handleProfileCaptured(msg, sender.tab?.id).catch(console.error);
   }
 });
 
 async function openSignIn(email, password, accountId) {
-  // Register the interceptor BEFORE the tab navigates, so its
-  // document_start scripts are in place for the homepage load that follows
-  // the Sony redirect.
-  await startCapture(accountId);
-
   const tab = await chrome.tabs.create({ url: "https://www.playstation.com/en-gb/" });
 
   await waitForTabLoad(tab.id);
@@ -117,6 +175,16 @@ async function openSignIn(email, password, accountId) {
   }
 
   if (typeof email !== "string" || email.trim() === "") return;
+
+  // Arm the profile/NPSSO capture only NOW — after any previously signed-in
+  // account has been signed out and we've committed to signing in the new one.
+  // Registering the interceptor earlier (before the initial page load) let it
+  // capture the OLD account's getProfileOracle on that first load, storing the
+  // wrong profile AND reading the wrong account's npsso, then stopping before
+  // the new account ever signed in. Arming here means only the new account's
+  // post-auth homepage load is captured, and by then account.sony.com's SSO
+  // session is the new account too.
+  await startCapture(accountId);
 
   // Stage 2: the sign-in button may navigate the same tab or open a new
   // popup/tab — wait for a tab scoped to this session to reach the Sony auth page
