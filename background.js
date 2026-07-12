@@ -107,26 +107,14 @@ async function openSignIn(email, password, accountId) {
 
   await waitForTabLoad(tab.id);
 
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: () => {
-      function tryClickSignIn(attemptsLeft) {
-        if (attemptsLeft === 0) return;
-        // data-qa is the most stable hook, but Sony renames its container path
-        // (e.g. "web-toolbar#profile-container#signin-button"), so match by
-        // suffix and fall back to the toolbar's sign-in button class.
-        const btn =
-          document.querySelector('[data-qa$="signin-button"]') ||
-          document.querySelector("button.web-toolbar__signin-button");
-        if (!btn) {
-          setTimeout(() => tryClickSignIn(attemptsLeft - 1), 200);
-          return;
-        }
-        btn.click();
-      }
-      tryClickSignIn(25); // poll up to 5 s for the SPA toolbar to mount
-    },
-  });
+  const outcome = await driveToolbar(tab.id);
+
+  if (outcome === "logged-out") {
+    // Signing out normally reloads the page; if Sony ever signs out in-place
+    // without navigating, fall through after the timeout and try anyway.
+    await waitForTabLoad(tab.id, 15_000).catch(() => {});
+    await driveToolbar(tab.id); // now signed out, this clicks sign-in
+  }
 
   if (typeof email !== "string" || email.trim() === "") return;
 
@@ -184,6 +172,60 @@ async function openSignIn(email, password, accountId) {
     },
     args: [email, password ?? null],
   });
+}
+
+// Drives the toolbar on the PlayStation homepage. If an account is already
+// signed in (profile icon present), opens the profile dropdown and clicks
+// sign-out; otherwise clicks the sign-in button. Resolves to "signin-clicked",
+// "logged-out", or "timeout".
+async function driveToolbar(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      return new Promise((resolve) => {
+        function trySignOut(attemptsLeft) {
+          if (attemptsLeft === 0) return resolve("timeout");
+          // Full path is "web-toolbar#profile-container#profile-dropdown#
+          // item-list#sign-out#button" — suffix match for the same reason
+          // as the sign-in button below.
+          const btn = document.querySelector('[data-qa$="sign-out#button"]');
+          if (!btn) {
+            setTimeout(() => trySignOut(attemptsLeft - 1), 200);
+            return;
+          }
+          btn.click();
+          resolve("logged-out");
+        }
+
+        function tryToolbar(attemptsLeft) {
+          if (attemptsLeft === 0) return resolve("timeout");
+          // Full path is "web-toolbar#profile-container#profile-icon#image#image".
+          const profileIcon = document.querySelector('[data-qa$="profile-icon#image#image"]');
+          if (profileIcon) {
+            // An account is already signed in — sign it out first.
+            profileIcon.click();
+            trySignOut(25); // poll up to 5 s for the dropdown to open
+            return;
+          }
+          // data-qa is the most stable hook, but Sony renames its container path
+          // (e.g. "web-toolbar#profile-container#signin-button"), so match by
+          // suffix and fall back to the toolbar's sign-in button class.
+          const signInBtn =
+            document.querySelector('[data-qa$="signin-button"]') ||
+            document.querySelector("button.web-toolbar__signin-button");
+          if (signInBtn) {
+            signInBtn.click();
+            resolve("signin-clicked");
+            return;
+          }
+          setTimeout(() => tryToolbar(attemptsLeft - 1), 200);
+        }
+
+        tryToolbar(25); // poll up to 5 s for the SPA toolbar to mount
+      });
+    },
+  });
+  return result;
 }
 
 // Waits for the Sony auth page to load in either the original tab (same-tab
