@@ -89,8 +89,6 @@ const els = {
   formTitle:  document.getElementById("formTitle"),
   editId:     document.getElementById("editId"),
   label:      document.getElementById("label"),
-  psnId:      document.getElementById("psnId"),
-  accountId:  document.getElementById("accountId"),
   email:      document.getElementById("email"),
   password:   document.getElementById("password"),
   saveBtn:    document.getElementById("saveBtn"),
@@ -146,8 +144,6 @@ function resetForm() {
 function startEdit(account) {
   els.editId.value = account.id;
   els.label.value = account.label || "";
-  els.psnId.value = account.onlineId || "";
-  els.accountId.value = account.accountId || "";
   els.email.value = account.email || "";
   els.password.value = account.password || "";
   els.formTitle.textContent = "Edit account";
@@ -377,8 +373,6 @@ els.form.addEventListener("submit", async (e) => {
 
   const id = els.editId.value;
   const label = els.label.value.trim();
-  const onlineId = els.psnId.value.trim();
-  const accountId = els.accountId.value.trim();
   const email = els.email.value.trim();
   const password = els.password.value;
 
@@ -400,12 +394,12 @@ els.form.addEventListener("submit", async (e) => {
   let next;
   if (id) {
     next = accounts.map((a) =>
-      a.id === id ? { ...a, label, onlineId, accountId, email, password, updatedAt: Date.now() } : a,
+      a.id === id ? { ...a, label, email, password, updatedAt: Date.now() } : a,
     );
   } else {
     next = [
       ...accounts,
-      { id: uid(), label, onlineId, accountId, email, password, notes: "", createdAt: Date.now() },
+      { id: uid(), label, email, password, notes: "", createdAt: Date.now() },
     ];
   }
 
