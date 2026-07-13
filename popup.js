@@ -1,15 +1,28 @@
 const STORAGE_KEY = "psn_accounts";
 
 const AVATAR_GRADIENTS = [
-  ["#a78bfa", "#6366f1"],
+  ["#3a91ff", "#0a4bd6"],
+  ["#8b5cf6", "#6d28d9"],
+  ["#14b8a6", "#0d9488"],
   ["#fb7185", "#e11d48"],
-  ["#38bdf8", "#0284c7"],
-  ["#34d399", "#059669"],
   ["#fb923c", "#ea580c"],
   ["#f472b6", "#db2777"],
   ["#a3e635", "#65a30d"],
   ["#e879f9", "#a21caf"],
 ];
+
+// NPSSO tokens are valid for ~61 days from issue.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NPSSO_TTL_DAYS = 61;
+const NPSSO_WARN_DAYS = 51;
+
+const STATUS_META = {
+  active:   { label: "NPSSO ACTIVE",  color: "#2fd3a0" },
+  soon:     { label: "EXPIRING SOON", color: "#f5b945" },
+  expired:  { label: "EXPIRED",       color: "#ff5d6c" },
+  none:     { label: "NOT FETCHED",   color: "#6b7689" },
+  fetching: { label: "FETCHING",      color: "#3a93ff" },
+};
 
 const els = {
   list:       document.getElementById("accountList"),
@@ -20,16 +33,22 @@ const els = {
   formTitle:  document.getElementById("formTitle"),
   editId:     document.getElementById("editId"),
   label:      document.getElementById("label"),
+  psnId:      document.getElementById("psnId"),
+  accountId:  document.getElementById("accountId"),
   email:      document.getElementById("email"),
   password:   document.getElementById("password"),
   saveBtn:    document.getElementById("saveBtn"),
   addBtn:     document.getElementById("addBtn"),
   cancelBtn:  document.getElementById("cancelBtn"),
+  cancelBtn2: document.getElementById("cancelBtn2"),
   formError:  document.getElementById("formError"),
   exportBtn:  document.getElementById("exportBtn"),
   importBtn:  document.getElementById("importBtn"),
   importFile: document.getElementById("importFile"),
 };
+
+let expandedId = null;
+let fetchingId = null;
 
 function loadAccounts() {
   return new Promise((resolve) => {
@@ -71,6 +90,8 @@ function resetForm() {
 function startEdit(account) {
   els.editId.value = account.id;
   els.label.value = account.label || "";
+  els.psnId.value = account.onlineId || "";
+  els.accountId.value = account.accountId || "";
   els.email.value = account.email || "";
   els.password.value = account.password || "";
   els.formTitle.textContent = "Edit account";
@@ -86,131 +107,204 @@ function avatarStyle(index) {
   return `background: linear-gradient(135deg, ${a}, ${b})`;
 }
 
-function avatarInitial(account) {
-  const src = account.label || account.email;
-  return src.charAt(0).toUpperCase();
+function npssoStatus(account) {
+  if (fetchingId === account.id) return "fetching";
+  if (!account.npsso) return "none";
+  const age = Date.now() - (account.npssoFetchedAt || 0);
+  if (age >= NPSSO_TTL_DAYS * DAY_MS) return "expired";
+  if (age >= NPSSO_WARN_DAYS * DAY_MS) return "soon";
+  return "active";
 }
 
-const SVG_OPEN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
-const SVG_COPY = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-const SVG_EDIT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-const SVG_DELETE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>`;
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return s + "s ago";
+  const mn = Math.floor(s / 60);
+  if (mn < 60) return mn + "m ago";
+  const h = Math.floor(mn / 60);
+  if (h < 24) return h + "h ago";
+  return Math.floor(h / 24) + "d ago";
+}
+
+function line(key, value, muted) {
+  const wrap = document.createElement("div");
+  wrap.className = "acct-line";
+  const keyEl = document.createElement("span");
+  keyEl.className = "acct-key";
+  keyEl.textContent = key;
+  const valEl = document.createElement("span");
+  valEl.className = muted ? "acct-val muted" : "acct-val";
+  valEl.textContent = value;
+  valEl.title = value;
+  wrap.appendChild(keyEl);
+  wrap.appendChild(valEl);
+  return wrap;
+}
+
+function detailBox(key, value, isToken) {
+  const box = document.createElement("div");
+  box.className = "detail-box";
+  const keyEl = document.createElement("span");
+  keyEl.className = "detail-key";
+  keyEl.textContent = key;
+  const valEl = document.createElement("span");
+  valEl.className = isToken ? "detail-val token" : "detail-val";
+  valEl.textContent = value;
+  box.appendChild(keyEl);
+  box.appendChild(valEl);
+  return box;
+}
+
+function buildDetail(account) {
+  const detail = document.createElement("div");
+  detail.className = "acct-detail";
+
+  detail.appendChild(detailBox("ACCOUNT ID", account.accountId || "—"));
+  if (account.npsso) {
+    detail.appendChild(detailBox("NPSSO TOKEN", account.npsso, true));
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "detail-actions";
+
+  if (account.npsso) {
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "action-btn";
+    copyBtn.textContent = "COPY NPSSO";
+    copyBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(account.npsso);
+      copyBtn.textContent = "COPIED ✓";
+      copyBtn.classList.add("copied");
+      setTimeout(() => {
+        copyBtn.textContent = "COPY NPSSO";
+        copyBtn.classList.remove("copied");
+      }, 1500);
+    });
+    actions.appendChild(copyBtn);
+  }
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "action-btn";
+  editBtn.textContent = "EDIT ACCOUNT";
+  editBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    startEdit(account);
+  });
+  actions.appendChild(editBtn);
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "action-btn danger";
+  deleteBtn.textContent = "DELETE";
+  deleteBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete account "${account.label || account.email}"?`)) return;
+    const all = await loadAccounts();
+    const next = all.filter((a) => a.id !== account.id);
+    await saveAccounts(next);
+    renderAccounts(next);
+  });
+  actions.appendChild(deleteBtn);
+
+  detail.appendChild(actions);
+  return detail;
+}
 
 function renderAccounts(accounts) {
   els.list.innerHTML = "";
 
   const count = accounts.length;
   els.groupLabel.textContent = count > 0 ? `Accounts · ${count}` : "";
-  els.footerStat.innerHTML = count > 0 ? `<strong>${count}</strong> account${count !== 1 ? "s" : ""}` : "";
-
-  if (count === 0) {
-    els.empty.classList.remove("hidden");
-    return;
-  }
-  els.empty.classList.add("hidden");
+  els.footerStat.textContent = count > 0 ? `${count} account${count !== 1 ? "s" : ""}` : "";
+  els.list.classList.toggle("hidden", count === 0);
+  els.empty.classList.toggle("hidden", count > 0);
+  if (count === 0) return;
 
   accounts.forEach((account, index) => {
+    const status = npssoStatus(account);
+    const meta = STATUS_META[status];
+    const isExpanded = expandedId === account.id;
+    const hasToken = !!account.npsso;
+
     const row = document.createElement("div");
-    row.className = "row";
+    row.className = isExpanded ? "acct expanded" : "acct";
+    row.style.borderLeftColor = meta.color;
+
+    const main = document.createElement("div");
+    main.className = "acct-main";
+    main.title = "Click to expand";
+    main.addEventListener("click", () => {
+      expandedId = isExpanded ? null : account.id;
+      renderAccounts(accounts);
+    });
 
     const avatar = document.createElement("div");
     avatar.className = "avatar";
     avatar.style.cssText = avatarStyle(index);
-    avatar.textContent = avatarInitial(account);
+    avatar.textContent = (account.label || account.email || "?").charAt(0).toUpperCase();
 
     const info = document.createElement("div");
-    info.className = "row-info";
+    info.className = "acct-info";
 
+    const title = document.createElement("div");
+    title.className = "acct-title";
     const labelEl = document.createElement("span");
-    if (account.label) {
-      labelEl.className = "row-label";
-      labelEl.textContent = account.label;
-    } else {
-      labelEl.className = "row-label untitled";
-      labelEl.textContent = "Untitled";
-    }
+    labelEl.className = "acct-label";
+    labelEl.textContent = account.label || account.email;
+    const statusEl = document.createElement("span");
+    statusEl.className = "acct-status";
+    statusEl.style.color = meta.color;
+    statusEl.textContent = meta.label;
+    title.appendChild(labelEl);
+    title.appendChild(statusEl);
+    info.appendChild(title);
 
-    const psnIdEl = document.createElement("span");
-    if (account.onlineId) {
-      psnIdEl.className = "row-psnid";
-      psnIdEl.textContent = `PSNID: ${account.onlineId}`;
-      psnIdEl.title = account.onlineId;
-    } else {
-      psnIdEl.className = "row-psnid muted";
-      psnIdEl.textContent = "No PSNID yet";
-    }
+    info.appendChild(
+      account.onlineId ? line("PSN ID", account.onlineId) : line("PSN ID", "Not fetched", true),
+    );
+    info.appendChild(
+      hasToken
+        ? line("NPSSO", account.npsso.slice(0, 12) + " ••••••••")
+        : line("NPSSO", "Not fetched", true),
+    );
 
-    info.appendChild(labelEl);
-    info.appendChild(psnIdEl);
-
-    if (account.accountId) {
-      const accountIdEl = document.createElement("span");
-      accountIdEl.className = "row-accountid";
-      accountIdEl.textContent = account.accountId;
-      accountIdEl.title = `Account ID: ${account.accountId}`;
-      info.appendChild(accountIdEl);
-    }
-
-    const actions = document.createElement("div");
-    actions.className = "row-actions";
-
-    const copyBtn = document.createElement("button");
-    copyBtn.type = "button";
-    copyBtn.className = "qa-btn";
-    copyBtn.innerHTML = SVG_COPY;
-    if (account.npsso) {
-      copyBtn.title = "Copy NPSSO";
-      copyBtn.addEventListener("click", () => {
-        navigator.clipboard.writeText(account.npsso);
-      });
-    } else {
-      copyBtn.title = "No NPSSO token yet";
-      copyBtn.disabled = true;
-    }
-
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.className = "qa-btn";
-    editBtn.title = "Edit";
-    editBtn.innerHTML = SVG_EDIT;
-    editBtn.addEventListener("click", () => startEdit(account));
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "qa-btn danger";
-    deleteBtn.title = "Delete";
-    deleteBtn.innerHTML = SVG_DELETE;
-    deleteBtn.addEventListener("click", async () => {
-      if (!confirm(`Delete account "${account.label || account.email}"?`)) return;
-      const all = await loadAccounts();
-      const next = all.filter((a) => a.id !== account.id);
-      await saveAccounts(next);
-      renderAccounts(next);
-    });
-
-    const fetchBtn = document.createElement("button");
-    fetchBtn.type = "button";
-    fetchBtn.className = "qa-btn";
-    fetchBtn.title = "Sign in to PSN";
-    fetchBtn.innerHTML = SVG_OPEN;
-    fetchBtn.addEventListener("click", () => {
+    const side = document.createElement("div");
+    side.className = "acct-side";
+    const timeEl = document.createElement("span");
+    timeEl.className = "acct-time";
+    timeEl.textContent = account.npssoFetchedAt ? timeAgo(account.npssoFetchedAt) : "never";
+    const getBtn = document.createElement("button");
+    getBtn.type = "button";
+    getBtn.className = hasToken ? "get-btn" : "get-btn primary";
+    getBtn.textContent = status === "fetching" ? "SYNC…" : hasToken ? "SYNC" : "GET";
+    getBtn.title = "Sign in to PSN and fetch NPSSO";
+    getBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (fetchingId) return;
+      fetchingId = account.id;
       chrome.runtime.sendMessage({ action: "openSignIn", id: account.id, email: account.email, password: account.password });
+      renderAccounts(accounts);
     });
+    side.appendChild(timeEl);
+    side.appendChild(getBtn);
 
-    actions.appendChild(fetchBtn);
-    actions.appendChild(copyBtn);
-    actions.appendChild(editBtn);
-    actions.appendChild(deleteBtn);
+    main.appendChild(avatar);
+    main.appendChild(info);
+    main.appendChild(side);
+    row.appendChild(main);
 
-    row.appendChild(avatar);
-    row.appendChild(info);
-    row.appendChild(actions);
+    if (isExpanded) row.appendChild(buildDetail(account));
+
     els.list.appendChild(row);
   });
 }
 
 els.addBtn.addEventListener("click", () => {
   if (els.form.classList.contains("hidden")) {
+    resetForm();
     els.form.classList.remove("hidden");
     els.label.focus();
   } else {
@@ -219,6 +313,7 @@ els.addBtn.addEventListener("click", () => {
 });
 
 els.cancelBtn.addEventListener("click", resetForm);
+els.cancelBtn2.addEventListener("click", resetForm);
 
 els.form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -226,6 +321,8 @@ els.form.addEventListener("submit", async (e) => {
 
   const id = els.editId.value;
   const label = els.label.value.trim();
+  const onlineId = els.psnId.value.trim();
+  const accountId = els.accountId.value.trim();
   const email = els.email.value.trim();
   const password = els.password.value;
 
@@ -247,12 +344,12 @@ els.form.addEventListener("submit", async (e) => {
   let next;
   if (id) {
     next = accounts.map((a) =>
-      a.id === id ? { ...a, label, email, password, updatedAt: Date.now() } : a,
+      a.id === id ? { ...a, label, onlineId, accountId, email, password, updatedAt: Date.now() } : a,
     );
   } else {
     next = [
       ...accounts,
-      { id: uid(), label, email, password, notes: "", createdAt: Date.now() },
+      { id: uid(), label, onlineId, accountId, email, password, notes: "", createdAt: Date.now() },
     ];
   }
 
@@ -318,6 +415,7 @@ els.importFile.addEventListener("change", async (e) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes[STORAGE_KEY]) {
+    fetchingId = null;
     renderAccounts(Array.isArray(changes[STORAGE_KEY].newValue) ? changes[STORAGE_KEY].newValue : []);
   }
 });

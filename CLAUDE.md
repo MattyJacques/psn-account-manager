@@ -41,11 +41,12 @@ The extension has two entry points:
 
 **DOM pattern:**
 - `els` object caches all static DOM references at startup
-- Dynamic account rows are `div.row` elements built in `renderAccounts()` — no table
-- Each row has an avatar (gradient circle with initial), label + email, and icon buttons: fetch (first), copy NPSSO, edit, delete. The copy button copies the stored `npsso` token and is disabled ("No NPSSO token yet") until one has been captured
-- The fetch button sends `{action: "openSignIn", email, password}` to the background service worker, which opens `www.playstation.com/en-gb/` and programmatically drives the full sign-in flow (email entry → password entry → submit) — opening via the PlayStation homepage preserves all OAuth params that a direct URL to the Sony auth page cannot replicate. **The stored password is passed to the background worker and injected directly into the Sony auth page via `scripting.executeScript()`.**
-- Form state is toggled between "add" and "edit" modes via `startEdit()` / `resetForm()`
-- The form has its own cancel button (`#cancelBtn`); the `#addBtn` header button also closes the form if already open
+- Dynamic account rows are `div.acct` elements built in `renderAccounts()` — no table
+- Each row (click to expand, tracked by the in-memory `expandedId`) shows: a status left-border + badge derived from `npssoStatus()` (NOT FETCHED / NPSSO ACTIVE / EXPIRING SOON at 51 days / EXPIRED at 61 days — the ~61-day NPSSO lifetime — plus a transient FETCHING while `fetchingId` is set), an avatar (gradient rounded square with initial), label, PSN ID and masked-NPSSO lines, a time-ago stamp, and a GET/SYNC button. Expanding reveals the full account ID and NPSSO token plus COPY NPSSO / EDIT ACCOUNT / DELETE action buttons
+- The GET/SYNC button sends `{action: "openSignIn", email, password}` to the background service worker, which opens `www.playstation.com/en-gb/` and programmatically drives the full sign-in flow (email entry → password entry → submit) — opening via the PlayStation homepage preserves all OAuth params that a direct URL to the Sony auth page cannot replicate. **The stored password is passed to the background worker and injected directly into the Sony auth page via `scripting.executeScript()`.** `fetchingId` is cleared when the background's storage write triggers the popup's `storage.onChanged` re-render
+- The inline form (styled per the Claude Design mock) has Label / PSN ID / Account ID / Email / Password fields — `onlineId` and `accountId` are user-editable as well as auto-captured — and toggles between "add" and "edit" modes via `startEdit()` / `resetForm()`
+- The form has its own close (`#cancelBtn`) and Cancel (`#cancelBtn2`) buttons; the `#addBtn` header button also closes the form if already open
+- The popup loads Manrope / JetBrains Mono from Google Fonts (allowed by the default MV3 extension-page CSP; falls back to system fonts offline)
 
 ## Permissions
 
