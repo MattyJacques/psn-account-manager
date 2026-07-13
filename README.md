@@ -14,7 +14,7 @@ A small Chrome / Brave extension to keep track of PlayStation Network accounts (
 - Add, edit, delete accounts.
 - Optional label + notes per account.
 - Show / hide passwords; one-click copy for email and password.
-- Export to JSON, import from JSON, clear-all.
+- Export to CSV, import from CSV, clear-all.
 - Data stored in `chrome.storage.local` — never synced, never sent anywhere.
 
 ## Security note

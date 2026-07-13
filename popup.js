@@ -1,5 +1,61 @@
 const STORAGE_KEY = "psn_accounts";
 
+const CSV_FIELDS = [
+  "id", "label", "email", "password", "notes", "createdAt", "updatedAt",
+  "accountId", "onlineId", "profileFetchedAt", "npsso", "npssoFetchedAt",
+];
+
+function csvEscape(value) {
+  if (value === undefined || value === null) return "";
+  const s = String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function accountsToCSV(accounts) {
+  const lines = [CSV_FIELDS.join(",")];
+  for (const a of accounts) {
+    lines.push(CSV_FIELDS.map((f) => csvEscape(a[f])).join(","));
+  }
+  return lines.join("\r\n");
+}
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\r") {
+      // skip; \n below terminates the row
+    } else if (c === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => !(r.length === 1 && r[0] === ""));
+}
+
 const AVATAR_GRADIENTS = [
   ["#3a91ff", "#0a4bd6"],
   ["#8b5cf6", "#6d28d9"],
@@ -364,13 +420,11 @@ els.exportBtn.addEventListener("click", async () => {
     alert("Nothing to export.");
     return;
   }
-  const blob = new Blob([JSON.stringify(accounts, null, 2)], {
-    type: "application/json",
-  });
+  const blob = new Blob([accountsToCSV(accounts)], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `psn-accounts-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `psn-accounts-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 });
@@ -382,23 +436,27 @@ els.importFile.addEventListener("change", async (e) => {
   if (!file) return;
   try {
     const text = await file.text();
-    const data = JSON.parse(text);
-    if (!Array.isArray(data)) throw new Error("Expected an array");
+    const rows = parseCSV(text);
+    if (rows.length === 0) throw new Error("Empty file");
+
+    const header = rows[0].map((key) => key.trim().toLowerCase());
+    const data = rows.slice(1).map((row) => {
+      const obj = {};
+      header.forEach((key, i) => { obj[key] = row[i]; });
+      return obj;
+    });
+
+    const strField = (v) => (typeof v === "string" && v !== "" ? v : undefined);
 
     const cleaned = data
-      .filter((a) => a && typeof a.email === "string" && typeof a.password === "string")
+      .filter((a) => strField(a.email) && strField(a.password))
       .map((a) => ({
-        id: a.id || uid(),
-        label: typeof a.label === "string" ? a.label : "",
+        id: uid(),
+        label: strField(a.label) || "",
         email: a.email,
         password: a.password,
-        notes: typeof a.notes === "string" ? a.notes : "",
-        createdAt: a.createdAt || Date.now(),
-        ...(typeof a.accountId === "string" ? { accountId: a.accountId } : {}),
-        ...(typeof a.onlineId === "string" ? { onlineId: a.onlineId } : {}),
-        ...(typeof a.profileFetchedAt === "number" ? { profileFetchedAt: a.profileFetchedAt } : {}),
-        ...(typeof a.npsso === "string" ? { npsso: a.npsso } : {}),
-        ...(typeof a.npssoFetchedAt === "number" ? { npssoFetchedAt: a.npssoFetchedAt } : {}),
+        notes: "",
+        createdAt: Date.now(),
       }));
 
     if (!confirm(`Replace existing accounts with ${cleaned.length} imported account(s)?`)) {
