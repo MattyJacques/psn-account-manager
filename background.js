@@ -20,6 +20,11 @@ const INTERCEPTOR_SCRIPTS = [
 ];
 const INTERCEPTOR_IDS = INTERCEPTOR_SCRIPTS.map((s) => s.id);
 const CAPTURE_TIMEOUT_MS = 90_000;
+// Sony sometimes challenges the sign-in with a 2FA verification-code page, which
+// can only be cleared by the user typing the emailed/texted code. When that
+// happens we extend the capture window to this longer value so the interceptor
+// isn't torn down while the user is still entering the code by hand.
+const CODE_PAGE_CAPTURE_TIMEOUT_MS = 5 * 60_000;
 
 // Tracks the account whose sign-in is in flight, so a captured profile can
 // be matched to it. Only one sign-in is driven at a time.
@@ -64,6 +69,15 @@ async function stopCapture() {
   try {
     await chrome.scripting.unregisterContentScripts({ ids: INTERCEPTOR_IDS });
   } catch {}
+}
+
+// Resets the capture teardown timer to a new duration. No-op if capture has
+// already been stopped (a profile was captured, or the timeout already fired),
+// so a late verification-code detection can't revive a finished sign-in.
+function extendCapture(ms) {
+  if (!pendingAccountId) return;
+  clearTimeout(captureTimer);
+  captureTimer = setTimeout(stopCapture, ms);
 }
 
 // Retrieves the account's NPSSO token from the Sony SSO cookie endpoint.
@@ -240,6 +254,48 @@ async function openSignIn(email, password, accountId) {
     },
     args: [email, password ?? null],
   });
+
+  // After credentials are submitted Sony may challenge with a 2FA verification-
+  // code page instead of completing the sign-in. That step needs a code only the
+  // user has, so automation stops here: surface the auth tab and extend the
+  // capture window so their manual entry isn't cut off. If no code page appears
+  // (the normal path), the watcher exits quietly and the interceptor captures
+  // the profile once the homepage loads.
+  await watchForVerificationCode(authTab.id);
+}
+
+// Polls the auth tab for the verification-code input. If it appears, focuses the
+// tab/window for the user and extends the capture timeout, then returns. Returns
+// as soon as the tab navigates away or closes (sign-in completed without a
+// challenge), or after the poll window elapses.
+async function watchForVerificationCode(authTabId, ATTEMPTS = 60, INTERVAL_MS = 500) {
+  for (let i = 0; i < ATTEMPTS; i++) {
+    let present = false;
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: authTabId },
+        // The React id (":r3:") is regenerated per render, so match the stable
+        // aria-label instead. The flow is locked to en-gb, so the English label
+        // is reliable; a localized flow would need the localized prefix.
+        func: () => !!document.querySelector('input[aria-label^="Verification code"]'),
+      });
+      present = result === true;
+    } catch {
+      // executeScript throws once the tab navigates to the post-auth homepage or
+      // closes — i.e. the sign-in completed without a code challenge. Stop.
+      return;
+    }
+    if (present) {
+      try {
+        const tab = await chrome.tabs.get(authTabId);
+        await chrome.tabs.update(authTabId, { active: true });
+        await chrome.windows.update(tab.windowId, { focused: true });
+      } catch {}
+      extendCapture(CODE_PAGE_CAPTURE_TIMEOUT_MS);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, INTERVAL_MS));
+  }
 }
 
 // Drives the toolbar on the PlayStation homepage. If an account is already
