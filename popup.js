@@ -433,9 +433,23 @@ els.form.addEventListener("submit", async (e) => {
 
   let next;
   if (id) {
-    next = accounts.map((a) =>
-      a.id === id ? { ...a, label, email, password, updatedAt: Date.now() } : a,
-    );
+    next = accounts.map((a) => {
+      if (a.id !== id) return a;
+      const updated = { ...a, label, email, password, updatedAt: Date.now() };
+      // A different email means a different PSN account: the captured
+      // identity (accountId/onlineId/npsso/avatar) belonged to the old one.
+      // Drop it so the background's identity guard doesn't reject the next
+      // capture as a wrong-account mismatch.
+      if (a.email.toLowerCase() !== email.toLowerCase()) {
+        delete updated.accountId;
+        delete updated.onlineId;
+        delete updated.profileFetchedAt;
+        delete updated.npsso;
+        delete updated.npssoFetchedAt;
+        delete updated.avatarUrl;
+      }
+      return updated;
+    });
   } else {
     next = [
       ...accounts,

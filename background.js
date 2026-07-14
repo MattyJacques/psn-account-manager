@@ -41,6 +41,23 @@ let captureTimer = null;
 let captureDone = Promise.resolve(false);
 let captureDoneResolve = null;
 
+// Chrome tears down an idle MV3 service worker after ~30s, and a pending bare
+// setTimeout does NOT count as activity — so if nothing touches an extension
+// API while a capture window is open (e.g. sign-in succeeded but the profile
+// capture missed, and refreshAll is awaiting captureDone until the timeout),
+// the worker dies, the timeout never fires, captureDone never settles, and the
+// refresh-all queue hangs forever. Any extension API call resets the idle
+// clock, so tick one every 20s while a capture is armed.
+let keepaliveTimer = null;
+function startKeepalive() {
+  if (keepaliveTimer != null) return;
+  keepaliveTimer = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20_000);
+}
+function stopKeepalive() {
+  clearInterval(keepaliveTimer);
+  keepaliveTimer = null;
+}
+
 function loadAccounts() {
   return new Promise((resolve) => {
     chrome.storage.local.get([STORAGE_KEY], (result) => {
@@ -71,13 +88,18 @@ async function startCapture(accountId) {
     // simply gets no profile capture. State is cleaned up later by the timeout.
     console.error("Failed to register interceptor", e);
   }
-  captureTimer = setTimeout(stopCapture, CAPTURE_TIMEOUT_MS);
+  captureTimer = setTimeout(() => {
+    console.warn("Capture window timed out — no profile was captured for this sign-in");
+    stopCapture(false);
+  }, CAPTURE_TIMEOUT_MS);
+  startKeepalive();
 }
 
 async function stopCapture(captured = false) {
   pendingAccountId = null;
   clearTimeout(captureTimer);
   captureTimer = null;
+  stopKeepalive();
   const resolve = captureDoneResolve;
   captureDoneResolve = null;
   try {
@@ -92,7 +114,10 @@ async function stopCapture(captured = false) {
 function extendCapture(ms) {
   if (!pendingAccountId) return;
   clearTimeout(captureTimer);
-  captureTimer = setTimeout(stopCapture, ms);
+  captureTimer = setTimeout(() => {
+    console.warn("Extended capture window timed out — no profile was captured for this sign-in");
+    stopCapture(false);
+  }, ms);
 }
 
 // Retrieves the account's NPSSO token from the Sony SSO cookie endpoint.
@@ -181,13 +206,44 @@ async function fetchAvatarUrl(tabId) {
   }
 }
 
+// Two capture paths can race (the interceptor's message and the replay
+// fallback below); the first one in wins and the loser returns early.
+let captureHandling = false;
+
 async function handleProfileCaptured({ accountId, onlineId }, tabId) {
   // A psnProfileCaptured message can arrive after the 90s timeout already
   // ran stopCapture; in that case there is nothing pending, so we return.
-  if (!pendingAccountId) return;
+  if (!pendingAccountId || captureHandling) return;
+  captureHandling = true;
+  try {
+    await persistCapturedProfile({ accountId, onlineId }, tabId);
+  } finally {
+    captureHandling = false;
+  }
+}
+
+async function persistCapturedProfile({ accountId, onlineId }, tabId) {
   // Match the captured profile to the account by the stored row id
   // (pendingAccountId), NOT by the Sony accountId value in the payload.
   const id = pendingAccountId;
+  // Identity guard: if this row was captured before and the profile that just
+  // arrived belongs to a DIFFERENT PSN account, the signed-in session is not
+  // the one we drove — e.g. Sony's SSO survived the sign-out and bounced the
+  // previous account straight back in. Saving would overwrite this row with
+  // another account's identity and NPSSO token, so fail the capture instead
+  // and let the queue retry with a fresh sign-in. (Editing a row's email
+  // clears its captured identity in the popup, so a legitimate account swap
+  // cannot trip this.)
+  if (accountId) {
+    const row = (await loadAccounts()).find((a) => a.id === id);
+    if (row?.accountId && row.accountId !== accountId) {
+      console.warn(
+        `Captured profile belongs to a different PSN account (accountId ${accountId}, expected ${row.accountId}) — refusing to save; failing this capture`
+      );
+      await stopCapture(false);
+      return;
+    }
+  }
   // The session is confirmed live at this point, so fetch the NPSSO token and
   // the toolbar avatar in the same pass and persist them alongside the profile
   // fields. tabId is the signed-in playstation.com tab — fetchNpsso uses it
@@ -212,6 +268,89 @@ async function handleProfileCaptured({ accountId, onlineId }, tabId) {
   await stopCapture(true);
 }
 
+// Same key-search as interceptor.js: the response nesting is not guaranteed
+// stable, so search the whole parsed object for the first truthy value.
+function deepFind(node, key) {
+  if (node == null || typeof node !== "object") return undefined;
+  const stack = [node];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur && typeof cur === "object") {
+      if (Object.prototype.hasOwnProperty.call(cur, key) && cur[key] != null && cur[key] !== "") {
+        return cur[key];
+      }
+      for (const v of Object.values(cur)) {
+        if (v && typeof v === "object") stack.push(v);
+      }
+    }
+  }
+  return undefined;
+}
+
+// Fallback capture for when the interceptor never reports: replay the page's
+// own getProfileOracle request. The resource-timing timeline keeps the full
+// request URL (persisted-query hash included) even when our fetch hook never
+// saw the request — e.g. when the post-auth return restored the homepage from
+// the back/forward cache, where content scripts do not re-inject. Replaying
+// with the CURRENT cookies returns the newly signed-in account's profile no
+// matter which session originally issued the request; Apollo's CSRF guard
+// only demands a JSON content-type header. Polls for the timeline entry while
+// the SPA is still booting. Resolves via handleProfileCaptured on success;
+// a miss changes nothing (the capture timeout still owns cleanup).
+async function captureProfileFallback(tabIds) {
+  for (const tabId of tabIds ?? []) {
+    if (!pendingAccountId) return; // the interceptor already reported
+    let text = null;
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url || !new URL(tab.url).hostname.endsWith("playstation.com")) continue;
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          return new Promise((resolve) => {
+            function attempt(attemptsLeft) {
+              const entry = performance
+                .getEntriesByType("resource")
+                .find((e) => e.name.includes("operationName=getProfileOracle"));
+              if (!entry) {
+                if (attemptsLeft <= 0) return resolve(null);
+                return setTimeout(() => attempt(attemptsLeft - 1), 500);
+              }
+              fetch(entry.name, { credentials: "include", headers: { "content-type": "application/json" } })
+                .then((r) => r.text())
+                .then(resolve)
+                .catch(() => resolve(null));
+            }
+            attempt(20); // poll up to 10s for the SPA to issue the profile query
+          });
+        },
+      });
+      text = result;
+    } catch {
+      continue; // tab gone or not injectable — try the next flow tab
+    }
+    if (typeof text !== "string") continue;
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    const accountId = deepFind(json, "accountId");
+    const onlineId = deepFind(json, "onlineId");
+    if (accountId == null && onlineId == null) continue;
+    console.warn("Interceptor missed the profile — captured via getProfileOracle replay fallback");
+    await handleProfileCaptured(
+      {
+        accountId: accountId != null ? String(accountId) : null,
+        onlineId: onlineId != null ? String(onlineId) : null,
+      },
+      tabId
+    );
+    return;
+  }
+}
+
 // True while a refresh-all queue is looping; single sign-ins are locked out
 // for its duration (and refreshAll is a no-op while a single sign-in pends).
 let refreshing = false;
@@ -224,12 +363,30 @@ function setRefreshState(state) {
   });
 }
 
+async function closeTabs(tabIds) {
+  for (const tabId of tabIds ?? []) {
+    try {
+      await chrome.tabs.remove(tabId);
+    } catch {}
+  }
+}
+
+// A transient failure — Sony's "Can't connect to the server." banner outliving
+// the in-page re-clicks, a flaky page load — shouldn't kill the whole queue:
+// each account gets up to this many full sign-in attempts (fresh tab, fresh
+// sign-out/sign-in), with a cooldown between them so a struggling or
+// rate-limiting server isn't immediately hammered again.
+const ACCOUNT_ATTEMPT_LIMIT = 3;
+const ACCOUNT_RETRY_DELAY_MS = 5000;
+
 // Signs in every stored account in turn, refreshing its profile and NPSSO.
 // Sequential by design — the capture pipeline (pendingAccountId) is a single
-// slot. Stops at the first failure (sign-in error or capture timeout), leaving
-// that account's sign-in tab open for inspection; successful accounts' tabs
-// are closed as the queue moves on. Progress is published to REFRESH_KEY so
-// the popup can render it across close/reopen.
+// slot. An account that fails (sign-in error or failed capture) is retried
+// from scratch up to ACCOUNT_ATTEMPT_LIMIT times; only when it exhausts its
+// attempts does the queue stop, leaving the last attempt's tabs open for
+// inspection. Successful accounts' tabs are closed as the queue moves on.
+// Progress is published to REFRESH_KEY so the popup can render it across
+// close/reopen.
 async function refreshAll() {
   if (refreshing || pendingAccountId) return;
   const accounts = await loadAccounts();
@@ -241,21 +398,51 @@ async function refreshAll() {
       if (refreshCancelRequested) break;
       const account = accounts[i];
       await setRefreshState({ running: true, index: i, total: accounts.length, activeId: account.id });
-      let tabIds;
-      try {
-        tabIds = await openSignIn(account.email, account.password, account.id);
-      } catch (e) {
-        console.error("Refresh-all sign-in failed for", account.email, e);
-        await stopCapture(false); // tear down the interceptor if the failure happened after arming
+      let tabIds = null;
+      let captured = false;
+      for (let attempt = 1; attempt <= ACCOUNT_ATTEMPT_LIMIT; attempt++) {
+        if (attempt > 1) {
+          // Retrying from scratch: close the failed attempt's tabs first (the
+          // fresh openSignIn signs out whatever session the dead attempt may
+          // have half-established, so no stale state can leak into the retry).
+          await closeTabs(tabIds);
+          tabIds = null;
+          await new Promise((r) => setTimeout(r, ACCOUNT_RETRY_DELAY_MS));
+          if (refreshCancelRequested) break;
+        }
+        // Reset the stale handle so a flow that throws before startCapture
+        // re-arms it (e.g. a toolbar-drive failure) can't read the PREVIOUS
+        // account's resolved captureDone as this attempt's success.
+        captureDone = Promise.resolve(false);
+        try {
+          tabIds = await openSignIn(account.email, account.password, account.id);
+        } catch (e) {
+          tabIds = e.tabIds ?? tabIds; // adopt the dead attempt's tabs so the retry closes them
+          // A thrown flow doesn't always mean a failed sign-in: Sony's SSO can
+          // bounce the tab straight back to the signed-in homepage without
+          // ever settling on the auth page (waitForSonyAuthTab times out)
+          // while the capture still landed. Peek at captureDone without
+          // blocking — racing an already-settled promise wins over the fresh
+          // false — and salvage the attempt.
+          const salvaged = await Promise.race([captureDone, Promise.resolve(false)]);
+          if (salvaged) {
+            console.warn(`Refresh-all: sign-in flow for ${account.email} threw but the capture landed — keeping it`, e);
+            captured = true;
+            break;
+          }
+          console.error(`Refresh-all sign-in attempt ${attempt} failed for`, account.email, e);
+          await stopCapture(false); // tear down the interceptor if the failure happened after arming
+          continue;
+        }
+        captured = await captureDone;
+        if (captured) break;
+        console.warn(`Refresh-all: capture attempt ${attempt}/${ACCOUNT_ATTEMPT_LIMIT} failed for ${account.email}` + (attempt < ACCOUNT_ATTEMPT_LIMIT ? " — retrying from scratch" : ""));
+      }
+      if (!captured) {
+        console.error(`Refresh-all: giving up on ${account.email} after ${ACCOUNT_ATTEMPT_LIMIT} attempts — stopping the queue`);
         break;
       }
-      const captured = await captureDone;
-      if (!captured) break;
-      for (const tabId of tabIds ?? []) {
-        try {
-          await chrome.tabs.remove(tabId);
-        } catch {}
-      }
+      await closeTabs(tabIds);
     }
   } finally {
     refreshing = false;
@@ -278,18 +465,40 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
 });
 
+// Wraps driveSignInFlow so any tab created before a failure travels with the
+// thrown error (err.tabIds) — refreshAll closes those tabs before retrying the
+// account, instead of leaking one open tab per failed attempt.
 async function openSignIn(email, password, accountId) {
   const tab = await chrome.tabs.create({ url: "https://www.playstation.com/en-gb/" });
+  const createdTabIds = [tab.id];
+  try {
+    return await driveSignInFlow(tab, createdTabIds, email, password, accountId);
+  } catch (e) {
+    e.tabIds = [...new Set(createdTabIds)];
+    throw e;
+  }
+}
 
+async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
   await waitForTabLoad(tab.id);
 
-  const outcome = await driveToolbar(tab.id);
+  let outcome = await driveToolbar(tab.id);
 
-  if (outcome === "logged-out") {
-    // Signing out normally reloads the page; if Sony ever signs out in-place
-    // without navigating, fall through after the timeout and try anyway.
+  // Signing out normally reloads the page; if Sony ever signs out in-place
+  // without navigating, fall through after the timeout and try anyway.
+  // Tolerate one stale re-render that still shows the profile icon (a second
+  // "logged-out") before giving up.
+  for (let signOuts = 0; outcome === "logged-out" && signOuts < 2; signOuts++) {
     await waitForTabLoad(tab.id, 15_000).catch(() => {});
-    await driveToolbar(tab.id); // now signed out, this clicks sign-in
+    outcome = await driveToolbar(tab.id);
+  }
+
+  if (outcome !== "signin-clicked") {
+    // Don't barrel on into a guaranteed 30s "Timed out waiting for Sony auth
+    // page" — fail now with the real reason: the sign-in button was never
+    // clicked (toolbar never mounted, sign-out never completed, or Sony
+    // changed the toolbar/dropdown selectors).
+    throw new Error(`Toolbar drive ended in "${outcome}" without clicking sign-in`);
   }
 
   if (typeof email !== "string" || email.trim() === "") return [tab.id];
@@ -307,6 +516,7 @@ async function openSignIn(email, password, accountId) {
   // Stage 2: the sign-in button may navigate the same tab or open a new
   // popup/tab — wait for a tab scoped to this session to reach the Sony auth page
   const authTab = await waitForSonyAuthTab(tab.id);
+  createdTabIds.push(authTab.id);
 
   await chrome.scripting.executeScript({
     target: { tabId: authTab.id },
@@ -371,7 +581,15 @@ async function openSignIn(email, password, accountId) {
   // The tabs the flow was driven through (the auth step may have opened its
   // own popup) — refreshAll closes them between queue items so a run doesn't
   // pile up tabs per account.
-  return [...new Set([tab.id, authTab.id])];
+  const flowTabIds = [...new Set([tab.id, authTab.id])];
+
+  // Give the interceptor its chance, but don't depend on it: if the capture
+  // is still pending once the auth flow has run its course, replay the
+  // profile query directly (see captureProfileFallback). Both paths funnel
+  // into handleProfileCaptured; whichever lands first wins.
+  if (pendingAccountId) await captureProfileFallback(flowTabIds);
+
+  return flowTabIds;
 }
 
 // Polls the auth tab after credential submission and handles the pages Sony can
@@ -386,7 +604,10 @@ async function openSignIn(email, password, accountId) {
 //   password submit with this transient error; the password field keeps its
 //   value, so re-clicking Sign In recovers it. Retried at most
 //   AUTH_RETRY_LIMIT times, with a cooldown between clicks so a banner that
-//   lingers while the retried request is in flight isn't re-clicked.
+//   lingers while the retried request is in flight isn't re-clicked. If the
+//   banner outlives the retries, the attempt is declared dead: the capture is
+//   failed immediately (stopCapture(false)) so refreshAll can start a fresh
+//   attempt instead of waiting out the 90s capture timeout.
 // Returns as soon as the tab navigates away or closes (sign-in completed), or
 // after the poll window elapses.
 const AUTH_RETRY_LIMIT = 3;
@@ -394,7 +615,24 @@ const AUTH_RETRY_COOLDOWN_MS = 3000;
 async function watchAuthInterstitials(authTabId, ATTEMPTS = 60, INTERVAL_MS = 500) {
   let codePageSeen = false;
   let retriesLeft = AUTH_RETRY_LIMIT;
+  let serverErrorStrikes = 0;
   for (let i = 0; i < ATTEMPTS; i++) {
+    // Sign-in completed: the auth tab has navigated back to playstation.com.
+    // This must be an explicit URL check — executeScript does NOT throw on
+    // that navigation (the extension has host permission for playstation.com,
+    // so injection succeeds and returns "none"), and without it the loop
+    // polls the signed-in homepage for its whole remaining window: ~30s per
+    // account normally, and up to 5 MINUTES when a 2FA code page stretched
+    // ATTEMPTS — which stalled the refresh-all queue after each sign-in.
+    // Checked positively against playstation.com (not "left my.account.
+    // sony.com") so transient redirect hops mid-auth can't end the watch
+    // while a passkey prompt could still appear.
+    try {
+      const tab = await chrome.tabs.get(authTabId);
+      if (tab.url && new URL(tab.url).hostname.endsWith("playstation.com")) return;
+    } catch {
+      return; // tab closed — the flow is over either way
+    }
     let state = null;
     try {
       const [{ result }] = await chrome.scripting.executeScript({
@@ -414,11 +652,16 @@ async function watchAuthInterstitials(authTabId, ATTEMPTS = 60, INTERVAL_MS = 50
           // Match without the apostrophe — Sony may render "Can't" with a
           // curly quote.
           const msg = document.querySelector('span[data-qa="message"]');
-          if (allowRetry && msg && msg.textContent.includes("connect to the server")) {
-            const btn = document.querySelector("button#signin-password-button");
-            if (btn && btn.getAttribute("aria-disabled") !== "true") {
-              btn.click();
-              return "retry-clicked";
+          if (msg && msg.textContent.includes("connect to the server")) {
+            if (allowRetry) {
+              const btn = document.querySelector("button#signin-password-button");
+              if (btn && btn.getAttribute("aria-disabled") !== "true") {
+                btn.click();
+                return "retry-clicked";
+              }
+            } else {
+              // Banner still up and no in-page retries left.
+              return "server-error";
             }
           }
           return "none";
@@ -427,13 +670,29 @@ async function watchAuthInterstitials(authTabId, ATTEMPTS = 60, INTERVAL_MS = 50
       });
       state = result;
     } catch {
-      // executeScript throws once the tab navigates to the post-auth homepage or
-      // closes — i.e. the sign-in flow has left the auth page. Stop.
+      // executeScript throws if the tab closed or landed on a host we can't
+      // inject into — the sign-in flow has left the auth page. Stop. (It does
+      // NOT throw on the post-auth playstation.com homepage — that exit is
+      // the URL check at the top of the loop.)
       return;
     }
     if (state === "retry-clicked") {
       retriesLeft--;
       await new Promise((r) => setTimeout(r, AUTH_RETRY_COOLDOWN_MS));
+    }
+    // The banner outlived every in-page re-click: this sign-in attempt is
+    // dead. Require two consecutive sightings — the first poll after the
+    // final retry click comes only one cooldown later, and that retried
+    // request may still be in flight — then fail the capture immediately
+    // instead of letting the rest of the 90s timeout burn, so refreshAll can
+    // move on to a fresh attempt for the account. (A fresh attempt is safe
+    // even if the slow final retry was about to succeed: openSignIn signs
+    // any existing session out before signing in.)
+    serverErrorStrikes = state === "server-error" ? serverErrorStrikes + 1 : 0;
+    if (serverErrorStrikes >= 2) {
+      console.warn("'Can't connect to the server' banner outlived all retries — failing this sign-in attempt");
+      await stopCapture(false);
+      return;
     }
     if (state === "code-page" && !codePageSeen) {
       codePageSeen = true;
