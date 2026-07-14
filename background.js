@@ -1,4 +1,9 @@
 const STORAGE_KEY = "psn_accounts";
+const REFRESH_KEY = "psn_refresh_state";
+
+// A refresh-all run lives only in this worker instance's memory; if the worker
+// was killed mid-run the persisted progress is stale, so clear it on startup.
+chrome.storage.local.remove(REFRESH_KEY);
 
 const INTERCEPTOR_SCRIPTS = [
   {
@@ -30,6 +35,11 @@ const CODE_PAGE_CAPTURE_TIMEOUT_MS = 5 * 60_000;
 // be matched to it. Only one sign-in is driven at a time.
 let pendingAccountId = null;
 let captureTimer = null;
+// Resolves true when a profile was captured, false when the capture window
+// timed out. Replaced each time startCapture arms; awaited by refreshAll to
+// know when the in-flight account is finished.
+let captureDone = Promise.resolve(false);
+let captureDoneResolve = null;
 
 function loadAccounts() {
   return new Promise((resolve) => {
@@ -49,6 +59,8 @@ async function startCapture(accountId) {
   pendingAccountId = accountId ?? null;
   clearTimeout(captureTimer);
   if (!pendingAccountId) return;
+  captureDoneResolve?.(false); // settle any orphaned waiter from a prior arm
+  captureDone = new Promise((resolve) => (captureDoneResolve = resolve));
   try {
     await chrome.scripting.unregisterContentScripts({ ids: INTERCEPTOR_IDS });
   } catch {}
@@ -62,13 +74,16 @@ async function startCapture(accountId) {
   captureTimer = setTimeout(stopCapture, CAPTURE_TIMEOUT_MS);
 }
 
-async function stopCapture() {
+async function stopCapture(captured = false) {
   pendingAccountId = null;
   clearTimeout(captureTimer);
   captureTimer = null;
+  const resolve = captureDoneResolve;
+  captureDoneResolve = null;
   try {
     await chrome.scripting.unregisterContentScripts({ ids: INTERCEPTOR_IDS });
   } catch {}
+  resolve?.(captured);
 }
 
 // Resets the capture teardown timer to a new duration. No-op if capture has
@@ -135,6 +150,37 @@ async function fetchNpsso(openerTabId) {
   }
 }
 
+// Reads the signed-in account's avatar URL from the toolbar profile icon on
+// the playstation.com tab, polling while the SPA toolbar renders it (the icon
+// only mounts once the profile query resolves). Returns the https image URL,
+// or null on any failure — an avatar miss never breaks profile capture.
+async function fetchAvatarUrl(tabId) {
+  if (tabId == null) return null;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        return new Promise((resolve) => {
+          function tryIcon(attemptsLeft) {
+            if (attemptsLeft === 0) return resolve(null);
+            // Full path is "web-toolbar#profile-container#profile-icon#image#image"
+            // — suffix match, same reasoning as the toolbar selectors in
+            // driveToolbar.
+            const img = document.querySelector('img[data-qa$="profile-icon#image#image"]');
+            if (img && img.src && img.src.startsWith("https://")) return resolve(img.src);
+            setTimeout(() => tryIcon(attemptsLeft - 1), 200);
+          }
+          tryIcon(50); // poll up to 10 s for the signed-in toolbar icon
+        });
+      },
+    });
+    return typeof result === "string" ? result : null;
+  } catch (e) {
+    console.error("Failed to read avatar URL", e);
+    return null;
+  }
+}
+
 async function handleProfileCaptured({ accountId, onlineId }, tabId) {
   // A psnProfileCaptured message can arrive after the 90s timeout already
   // ran stopCapture; in that case there is nothing pending, so we return.
@@ -142,11 +188,12 @@ async function handleProfileCaptured({ accountId, onlineId }, tabId) {
   // Match the captured profile to the account by the stored row id
   // (pendingAccountId), NOT by the Sony accountId value in the payload.
   const id = pendingAccountId;
-  // The session is confirmed live at this point, so fetch the NPSSO token in
-  // the same pass and persist it alongside the profile fields. tabId is the
-  // signed-in playstation.com tab — used only to locate its window, so the
-  // token is read from the correct (possibly private) cookie store.
-  const npsso = await fetchNpsso(tabId);
+  // The session is confirmed live at this point, so fetch the NPSSO token and
+  // the toolbar avatar in the same pass and persist them alongside the profile
+  // fields. tabId is the signed-in playstation.com tab — fetchNpsso uses it
+  // only to locate its window (so the token is read from the correct, possibly
+  // private, cookie store); fetchAvatarUrl reads the toolbar icon from it.
+  const [npsso, avatarUrl] = await Promise.all([fetchNpsso(tabId), fetchAvatarUrl(tabId)]);
   const accounts = await loadAccounts();
   let changed = false;
   const next = accounts.map((a) => {
@@ -158,15 +205,72 @@ async function handleProfileCaptured({ accountId, onlineId }, tabId) {
       onlineId: onlineId ?? a.onlineId,
       profileFetchedAt: Date.now(),
       ...(npsso ? { npsso, npssoFetchedAt: Date.now() } : {}),
+      ...(avatarUrl ? { avatarUrl } : {}),
     };
   });
   if (changed) await saveAccounts(next);
-  await stopCapture();
+  await stopCapture(true);
+}
+
+// True while a refresh-all queue is looping; single sign-ins are locked out
+// for its duration (and refreshAll is a no-op while a single sign-in pends).
+let refreshing = false;
+let refreshCancelRequested = false;
+
+function setRefreshState(state) {
+  return new Promise((resolve) => {
+    if (state) chrome.storage.local.set({ [REFRESH_KEY]: state }, resolve);
+    else chrome.storage.local.remove(REFRESH_KEY, resolve);
+  });
+}
+
+// Signs in every stored account in turn, refreshing its profile and NPSSO.
+// Sequential by design — the capture pipeline (pendingAccountId) is a single
+// slot. Stops at the first failure (sign-in error or capture timeout), leaving
+// that account's sign-in tab open for inspection; successful accounts' tabs
+// are closed as the queue moves on. Progress is published to REFRESH_KEY so
+// the popup can render it across close/reopen.
+async function refreshAll() {
+  if (refreshing || pendingAccountId) return;
+  const accounts = await loadAccounts();
+  if (accounts.length === 0) return;
+  refreshing = true;
+  refreshCancelRequested = false;
+  try {
+    for (let i = 0; i < accounts.length; i++) {
+      if (refreshCancelRequested) break;
+      const account = accounts[i];
+      await setRefreshState({ running: true, index: i, total: accounts.length, activeId: account.id });
+      let tabIds;
+      try {
+        tabIds = await openSignIn(account.email, account.password, account.id);
+      } catch (e) {
+        console.error("Refresh-all sign-in failed for", account.email, e);
+        await stopCapture(false); // tear down the interceptor if the failure happened after arming
+        break;
+      }
+      const captured = await captureDone;
+      if (!captured) break;
+      for (const tabId of tabIds ?? []) {
+        try {
+          await chrome.tabs.remove(tabId);
+        } catch {}
+      }
+    }
+  } finally {
+    refreshing = false;
+    await setRefreshState(null);
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.action === "openSignIn") {
+    if (refreshing) return;
     openSignIn(msg.email, msg.password, msg.id).catch(console.error);
+  } else if (msg.action === "refreshAll") {
+    refreshAll().catch(console.error);
+  } else if (msg.action === "cancelRefreshAll") {
+    refreshCancelRequested = true;
   } else if (msg.action === "psnProfileCaptured") {
     // sender.tab is the playstation.com tab that relayed the capture; its
     // window determines which cookie store the NPSSO token is read from.
@@ -188,7 +292,7 @@ async function openSignIn(email, password, accountId) {
     await driveToolbar(tab.id); // now signed out, this clicks sign-in
   }
 
-  if (typeof email !== "string" || email.trim() === "") return;
+  if (typeof email !== "string" || email.trim() === "") return [tab.id];
 
   // Arm the profile/NPSSO capture only NOW — after any previously signed-in
   // account has been signed out and we've committed to signing in the new one.
@@ -263,6 +367,11 @@ async function openSignIn(email, password, accountId) {
   // normal path), the watcher exits quietly and the interceptor captures the
   // profile once the homepage loads.
   await watchAuthInterstitials(authTab.id);
+
+  // The tabs the flow was driven through (the auth step may have opened its
+  // own popup) — refreshAll closes them between queue items so a run doesn't
+  // pile up tabs per account.
+  return [...new Set([tab.id, authTab.id])];
 }
 
 // Polls the auth tab after credential submission and handles the pages Sony can

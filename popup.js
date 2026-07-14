@@ -1,8 +1,9 @@
 const STORAGE_KEY = "psn_accounts";
+const REFRESH_KEY = "psn_refresh_state";
 
 const CSV_FIELDS = [
   "id", "label", "email", "password", "notes", "createdAt", "updatedAt",
-  "accountId", "onlineId", "profileFetchedAt", "npsso", "npssoFetchedAt",
+  "accountId", "onlineId", "profileFetchedAt", "npsso", "npssoFetchedAt", "avatarUrl",
 ];
 
 function csvEscape(value) {
@@ -96,6 +97,8 @@ const els = {
   cancelBtn:  document.getElementById("cancelBtn"),
   cancelBtn2: document.getElementById("cancelBtn2"),
   formError:  document.getElementById("formError"),
+  refreshAllBtn: document.getElementById("refreshAllBtn"),
+  refreshAllLabel: document.getElementById("refreshAllLabel"),
   exportBtn:  document.getElementById("exportBtn"),
   importBtn:  document.getElementById("importBtn"),
   importFile: document.getElementById("importFile"),
@@ -103,6 +106,11 @@ const els = {
 
 let expandedId = null;
 let fetchingId = null;
+// Progress of a background refresh-all run ({running, index, total, activeId}
+// published under REFRESH_KEY), or null when idle. Owned by the background
+// worker so it survives the popup closing when sign-in tabs open.
+let refreshState = null;
+let currentAccounts = [];
 
 function loadAccounts() {
   return new Promise((resolve) => {
@@ -160,7 +168,7 @@ function avatarStyle(index) {
 }
 
 function npssoStatus(account) {
-  if (fetchingId === account.id) return "fetching";
+  if (fetchingId === account.id || refreshState?.activeId === account.id) return "fetching";
   if (!account.npsso) return "none";
   const age = Date.now() - (account.npssoFetchedAt || 0);
   if (age >= NPSSO_TTL_DAYS * DAY_MS) return "expired";
@@ -265,10 +273,24 @@ function buildDetail(account) {
   return detail;
 }
 
+function updateRefreshAllBtn(count) {
+  const running = !!refreshState?.running;
+  els.refreshAllBtn.disabled = count === 0 && !running;
+  els.refreshAllBtn.classList.toggle("running", running);
+  els.refreshAllLabel.textContent = running
+    ? `${refreshState.index + 1}/${refreshState.total}`
+    : "Refresh All";
+  els.refreshAllBtn.title = running
+    ? "Refreshing all accounts — click to cancel after the current one"
+    : "Sign in to every account in turn and refresh its NPSSO";
+}
+
 function renderAccounts(accounts) {
+  currentAccounts = accounts;
   els.list.innerHTML = "";
 
   const count = accounts.length;
+  updateRefreshAllBtn(count);
   els.groupLabel.textContent = count > 0 ? `Accounts · ${count}` : "";
   els.footerStat.textContent = count > 0 ? `${count} account${count !== 1 ? "s" : ""}` : "";
   els.list.classList.toggle("hidden", count === 0);
@@ -297,6 +319,14 @@ function renderAccounts(accounts) {
     avatar.className = "avatar";
     avatar.style.cssText = avatarStyle(index);
     avatar.textContent = (account.label || account.email || "?").charAt(0).toUpperCase();
+    if (account.avatarUrl) {
+      const img = document.createElement("img");
+      img.className = "avatar-img";
+      img.alt = "";
+      img.addEventListener("error", () => img.remove()); // fall back to the gradient initial
+      img.src = account.avatarUrl;
+      avatar.appendChild(img);
+    }
 
     const info = document.createElement("div");
     info.className = "acct-info";
@@ -335,7 +365,7 @@ function renderAccounts(accounts) {
     getBtn.title = "Sign in to PSN and fetch NPSSO";
     getBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (fetchingId) return;
+      if (fetchingId || refreshState?.running) return;
       fetchingId = account.id;
       chrome.runtime.sendMessage({ action: "openSignIn", id: account.id, email: account.email, password: account.password });
       renderAccounts(accounts);
@@ -361,6 +391,16 @@ els.addBtn.addEventListener("click", () => {
     els.label.focus();
   } else {
     resetForm();
+  }
+});
+
+els.refreshAllBtn.addEventListener("click", () => {
+  if (refreshState?.running) {
+    chrome.runtime.sendMessage({ action: "cancelRefreshAll" });
+    els.refreshAllLabel.textContent = "Cancelling…";
+  } else {
+    if (currentAccounts.length === 0 || fetchingId) return;
+    chrome.runtime.sendMessage({ action: "refreshAll" });
   }
 });
 
@@ -466,13 +506,25 @@ els.importFile.addEventListener("change", async (e) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes[STORAGE_KEY]) {
-    fetchingId = null;
-    renderAccounts(Array.isArray(changes[STORAGE_KEY].newValue) ? changes[STORAGE_KEY].newValue : []);
+  if (area !== "local") return;
+  if (!changes[STORAGE_KEY] && !changes[REFRESH_KEY]) return;
+  if (changes[REFRESH_KEY]) {
+    refreshState = changes[REFRESH_KEY].newValue ?? null;
   }
+  if (changes[STORAGE_KEY]) {
+    fetchingId = null;
+    currentAccounts = Array.isArray(changes[STORAGE_KEY].newValue) ? changes[STORAGE_KEY].newValue : [];
+  }
+  renderAccounts(currentAccounts);
 });
 
 (async function init() {
-  const accounts = await loadAccounts();
+  const [accounts, stored] = await Promise.all([
+    loadAccounts(),
+    new Promise((resolve) => {
+      chrome.storage.local.get([REFRESH_KEY], (result) => resolve(result[REFRESH_KEY]));
+    }),
+  ]);
+  refreshState = stored ?? null;
   renderAccounts(accounts);
 })();

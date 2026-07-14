@@ -24,25 +24,29 @@ The extension has two entry points:
 
 **Profile / NPSSO capture timing (subtle — do not move):** `openSignIn()` arms the capture (`startCapture()`, which registers the `interceptor.js` content scripts) **only after** sign-out and clicking sign-in — NOT before the initial page load. If it armed earlier, the interceptor would capture the *previously* signed-in account's `getProfileOracle` on the first load (storing the wrong `accountId`/`onlineId` and reading the wrong account's npsso), then `stopCapture()` after that first hit — before the new account ever signed in. Arming after sign-in means only the new account's post-auth homepage load is captured, and by then `account.sony.com`'s SSO session is the new account too.
 
+**Refresh All (sequential queue):** the popup header's `#refreshAllBtn` sends `refreshAll`; `refreshAll()` in the background loops over every stored account **one at a time** (the capture pipeline is a single slot — `pendingAccountId`), reusing `openSignIn()` per account. It knows an account is *finished* by awaiting `captureDone` — a promise created by `startCapture()` and resolved by `stopCapture(captured)` with `true` from `handleProfileCaptured` or `false` on capture timeout. The queue **stops at the first failure** (an `openSignIn()` throw or a `false` capture), leaving that account's tabs open for inspection; a successful account's sign-in tabs (returned by `openSignIn()` as an id array — the auth step can spawn its own popup) are closed before the next account starts. Progress is published to `chrome.storage.local` under `"psn_refresh_state"` (`{running, index, total, activeId}`, removed when idle) because the queue cannot live in the popup — creating the sign-in tab closes the popup. The popup renders it as a `2/5` counter on the button next to a spinning SVG refresh icon (click again = cancel after the current account) and the FETCHING badge on the active row; the button label text lives in `#refreshAllLabel` so updates don't wipe the inline SVG. Single GET/SYNC is locked out while a run is active and vice versa. The worker clears `"psn_refresh_state"` at startup: a run only exists in one worker instance's memory, so a fresh worker means any persisted state is stale.
+
 **Data flow:**
 - All state lives in `chrome.storage.local` under the key `"psn_accounts"` as a JSON array
 - `loadAccounts()` / `saveAccounts()` are the only storage access points
 - `renderAccounts()` rebuilds the entire account list DOM from the in-memory array on every state change — there is no partial/incremental update
+- `"psn_refresh_state"` is the only other storage key — refresh-all queue progress, written solely by the background worker, read-only in the popup
 
 **Account object shape:**
 ```js
 { id, label, email, password, notes, createdAt, updatedAt?,
-  accountId?, onlineId?, profileFetchedAt?, npsso?, npssoFetchedAt? }
+  accountId?, onlineId?, profileFetchedAt?, npsso?, npssoFetchedAt?, avatarUrl? }
 ```
 - `id` comes from `uid()` (timestamp + random suffix)
 - `password` is stored in plaintext in `chrome.storage.local`
 - `accountId` / `onlineId` / `profileFetchedAt` are captured from the profile GraphQL response after a successful sign-in
 - `npsso` / `npssoFetchedAt` hold the Sony SSO token fetched (also in plaintext) after that same sign-in — see below
+- `avatarUrl` is the account's PSN avatar image URL, scraped by `fetchAvatarUrl()` from the toolbar profile icon (`img[data-qa$="profile-icon#image#image"]`, polled while the SPA renders it) on the signed-in playstation.com tab. It runs in `handleProfileCaptured` in parallel with `fetchNpsso()`, so it lands in the same storage write; a miss stores nothing and never breaks the capture
 
 **DOM pattern:**
 - `els` object caches all static DOM references at startup
 - Dynamic account rows are `div.acct` elements built in `renderAccounts()` — no table
-- Each row (click to expand, tracked by the in-memory `expandedId`) shows: a status left-border + badge derived from `npssoStatus()` (NOT FETCHED / NPSSO ACTIVE / EXPIRING SOON at 51 days / EXPIRED at 61 days — the ~61-day NPSSO lifetime — plus a transient FETCHING while `fetchingId` is set), an avatar (gradient rounded square with initial), label, PSN ID and masked-NPSSO lines, a time-ago stamp, and a GET/SYNC button. Expanding reveals the full account ID and NPSSO token plus COPY NPSSO / EDIT ACCOUNT / DELETE action buttons
+- Each row (click to expand, tracked by the in-memory `expandedId`) shows: a status left-border + badge derived from `npssoStatus()` (NOT FETCHED / NPSSO ACTIVE / EXPIRING SOON at 51 days / EXPIRED at 61 days — the ~61-day NPSSO lifetime — plus a transient FETCHING while `fetchingId` is set), an avatar (the captured PSN avatar image when `avatarUrl` is set, overlaying a gradient rounded square with initial that doubles as the fallback — the `<img>` removes itself on load error), label, PSN ID and masked-NPSSO lines, a time-ago stamp, and a GET/SYNC button. Expanding reveals the full account ID and NPSSO token plus COPY NPSSO / EDIT ACCOUNT / DELETE action buttons
 - The GET/SYNC button sends `{action: "openSignIn", email, password}` to the background service worker, which opens `www.playstation.com/en-gb/` and programmatically drives the full sign-in flow (email entry → password entry → submit) — opening via the PlayStation homepage preserves all OAuth params that a direct URL to the Sony auth page cannot replicate. **The stored password is passed to the background worker and injected directly into the Sony auth page via `scripting.executeScript()`.** `fetchingId` is cleared when the background's storage write triggers the popup's `storage.onChanged` re-render
 - The inline form (styled per the Claude Design mock) has Label / Email / Password fields — `onlineId` and `accountId` are auto-captured only (not on the form; `onlineId` shown read-only in the collapsed row, `accountId` in the expanded detail view) — and toggles between "add" and "edit" modes via `startEdit()` / `resetForm()`
 - The form has its own close (`#cancelBtn`) and Cancel (`#cancelBtn2`) buttons; the `#addBtn` header button also closes the form if already open
