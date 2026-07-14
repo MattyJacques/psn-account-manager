@@ -255,44 +255,66 @@ async function openSignIn(email, password, accountId) {
     args: [email, password ?? null],
   });
 
-  // After credentials are submitted Sony may challenge with a 2FA verification-
-  // code page instead of completing the sign-in. That step needs a code only the
-  // user has, so automation stops here: surface the auth tab and extend the
-  // capture window so their manual entry isn't cut off. If no code page appears
-  // (the normal path), the watcher exits quietly and the interceptor captures
-  // the profile once the homepage loads.
-  await watchForVerificationCode(authTab.id);
+  // After credentials are submitted Sony may interpose extra pages before
+  // completing the sign-in: a 2FA verification-code challenge (needs a code only
+  // the user has — surface the tab and extend the capture window so their manual
+  // entry isn't cut off) and/or a passkey-creation prompt (dismissed
+  // automatically via its "Remind Me Later" button). If neither appears (the
+  // normal path), the watcher exits quietly and the interceptor captures the
+  // profile once the homepage loads.
+  await watchAuthInterstitials(authTab.id);
 }
 
-// Polls the auth tab for the verification-code input. If it appears, focuses the
-// tab/window for the user and extends the capture timeout, then returns. Returns
-// as soon as the tab navigates away or closes (sign-in completed without a
-// challenge), or after the poll window elapses.
-async function watchForVerificationCode(authTabId, ATTEMPTS = 60, INTERVAL_MS = 500) {
+// Polls the auth tab after credential submission and handles the pages Sony can
+// interpose before the sign-in completes:
+// - Passkey-creation prompt: clicks its "Remind Me Later" button and keeps
+//   watching (the flow continues on its own after dismissal).
+// - 2FA verification-code page: focuses the tab/window for the user and extends
+//   the capture timeout (once), then keeps watching — the passkey prompt can
+//   still appear AFTER the user finishes typing the code, so the poll window is
+//   stretched to match the extended capture instead of returning.
+// Returns as soon as the tab navigates away or closes (sign-in completed), or
+// after the poll window elapses.
+async function watchAuthInterstitials(authTabId, ATTEMPTS = 60, INTERVAL_MS = 500) {
+  let codePageSeen = false;
   for (let i = 0; i < ATTEMPTS; i++) {
-    let present = false;
+    let state = null;
     try {
       const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: authTabId },
-        // The React id (":r3:") is regenerated per render, so match the stable
-        // aria-label instead. The flow is locked to en-gb, so the English label
-        // is reliable; a localized flow would need the localized prefix.
-        func: () => !!document.querySelector('input[aria-label^="Verification code"]'),
+        func: () => {
+          const remind = document.querySelector('button[data-qa="button-remind-later"]');
+          if (remind && remind.getAttribute("aria-disabled") !== "true") {
+            remind.click();
+            return "remind-later-clicked";
+          }
+          // The React id (":r3:") is regenerated per render, so match the stable
+          // aria-label instead. The flow is locked to en-gb, so the English label
+          // is reliable; a localized flow would need the localized prefix.
+          if (document.querySelector('input[aria-label^="Verification code"]')) {
+            return "code-page";
+          }
+          return "none";
+        },
       });
-      present = result === true;
+      state = result;
     } catch {
       // executeScript throws once the tab navigates to the post-auth homepage or
-      // closes — i.e. the sign-in completed without a code challenge. Stop.
+      // closes — i.e. the sign-in flow has left the auth page. Stop.
       return;
     }
-    if (present) {
+    if (state === "code-page" && !codePageSeen) {
+      codePageSeen = true;
       try {
         const tab = await chrome.tabs.get(authTabId);
         await chrome.tabs.update(authTabId, { active: true });
         await chrome.windows.update(tab.windowId, { focused: true });
       } catch {}
       extendCapture(CODE_PAGE_CAPTURE_TIMEOUT_MS);
-      return;
+      // Stretch the remaining poll window to the extended capture so a passkey
+      // prompt shown after manual code entry still gets dismissed.
+      ATTEMPTS = Math.ceil(CODE_PAGE_CAPTURE_TIMEOUT_MS / INTERVAL_MS);
+      i = 0;
     }
     await new Promise((r) => setTimeout(r, INTERVAL_MS));
   }
