@@ -382,16 +382,24 @@ async function openSignIn(email, password, accountId) {
 //   the capture timeout (once), then keeps watching — the passkey prompt can
 //   still appear AFTER the user finishes typing the code, so the poll window is
 //   stretched to match the extended capture instead of returning.
+// - "Can't connect to the server." banner: Sony intermittently fails the
+//   password submit with this transient error; the password field keeps its
+//   value, so re-clicking Sign In recovers it. Retried at most
+//   AUTH_RETRY_LIMIT times, with a cooldown between clicks so a banner that
+//   lingers while the retried request is in flight isn't re-clicked.
 // Returns as soon as the tab navigates away or closes (sign-in completed), or
 // after the poll window elapses.
+const AUTH_RETRY_LIMIT = 3;
+const AUTH_RETRY_COOLDOWN_MS = 3000;
 async function watchAuthInterstitials(authTabId, ATTEMPTS = 60, INTERVAL_MS = 500) {
   let codePageSeen = false;
+  let retriesLeft = AUTH_RETRY_LIMIT;
   for (let i = 0; i < ATTEMPTS; i++) {
     let state = null;
     try {
       const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: authTabId },
-        func: () => {
+        func: (allowRetry) => {
           const remind = document.querySelector('button[data-qa="button-remind-later"]');
           if (remind && remind.getAttribute("aria-disabled") !== "true") {
             remind.click();
@@ -403,14 +411,29 @@ async function watchAuthInterstitials(authTabId, ATTEMPTS = 60, INTERVAL_MS = 50
           if (document.querySelector('input[aria-label^="Verification code"]')) {
             return "code-page";
           }
+          // Match without the apostrophe — Sony may render "Can't" with a
+          // curly quote.
+          const msg = document.querySelector('span[data-qa="message"]');
+          if (allowRetry && msg && msg.textContent.includes("connect to the server")) {
+            const btn = document.querySelector("button#signin-password-button");
+            if (btn && btn.getAttribute("aria-disabled") !== "true") {
+              btn.click();
+              return "retry-clicked";
+            }
+          }
           return "none";
         },
+        args: [retriesLeft > 0],
       });
       state = result;
     } catch {
       // executeScript throws once the tab navigates to the post-auth homepage or
       // closes — i.e. the sign-in flow has left the auth page. Stop.
       return;
+    }
+    if (state === "retry-clicked") {
+      retriesLeft--;
+      await new Promise((r) => setTimeout(r, AUTH_RETRY_COOLDOWN_MS));
     }
     if (state === "code-page" && !codePageSeen) {
       codePageSeen = true;
