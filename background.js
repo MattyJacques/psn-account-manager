@@ -5,6 +5,16 @@ const REFRESH_KEY = "psn_refresh_state";
 // was killed mid-run the persisted progress is stale, so clear it on startup.
 chrome.storage.local.remove(REFRESH_KEY);
 
+const CHECK_KEY = "psn_check_state";
+const SSOCOOKIE_URL = "https://ca.account.sony.com/api/v1/ssocookie";
+// Checks run one at a time (single slot), so a single reused DNR session-rule
+// id is always enough — there is never more than one live rule.
+const CHECK_DNR_RULE_ID = 1;
+
+// A check-all run lives only in this worker instance's memory; clear stale
+// persisted progress on startup, same reasoning as REFRESH_KEY above.
+chrome.storage.local.remove(CHECK_KEY);
+
 const INTERCEPTOR_SCRIPTS = [
   {
     id: "psn-interceptor-main",
@@ -351,10 +361,108 @@ async function captureProfileFallback(tabIds) {
   }
 }
 
+// ── NPSSO validity check ──────────────────────────────────────────────────
+//
+// Validates an account's STORED npsso token against Sony's SSO endpoint.
+// fetch() cannot set a Cookie header (it's a forbidden header), so a DNR
+// session rule injects "Cookie: npsso=<token>" onto just this one request. The
+// rule is scoped to resourceType "xmlhttprequest" so it can never affect
+// fetchNpsso()'s main_frame tab navigation to the same URL. credentials:"omit"
+// stops the browser adding its own cookies, so the stored token is the only
+// thing on the wire and the response reflects that token alone — not the live
+// browser session. Session rules (not dynamic) keep the token off DNR's
+// on-disk rule store, and any leftover rule dies with the browser session.
+//
+// Returns { valid, rotated? } — rotated is set when Sony echoed a DIFFERENT
+// token for the same session (rotation) so the caller can save the fresh one.
+// Returns null when the result is indeterminate (network failure / non-JSON
+// body) so a Sony outage never brands a token invalid. Never throws.
+async function checkNpsso(account) {
+  const token = account.npsso;
+  if (!token) return null;
+  const rule = {
+    id: CHECK_DNR_RULE_ID,
+    priority: 1,
+    action: {
+      type: "modifyHeaders",
+      requestHeaders: [{ header: "cookie", operation: "set", value: `npsso=${token}` }],
+    },
+    condition: {
+      urlFilter: "https://ca.account.sony.com/api/v1/ssocookie",
+      resourceTypes: ["xmlhttprequest"],
+    },
+  };
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [CHECK_DNR_RULE_ID],
+      addRules: [rule],
+    });
+    let res;
+    try {
+      res = await fetch(SSOCOOKIE_URL, { credentials: "omit", cache: "no-store" });
+    } finally {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [CHECK_DNR_RULE_ID] });
+    }
+    if (!res.ok) return { valid: false };
+    let json;
+    try {
+      json = await res.json();
+    } catch {
+      return null; // non-JSON body — indeterminate, record nothing
+    }
+    const returned = typeof json?.npsso === "string" && json.npsso ? json.npsso : null;
+    if (returned) return { valid: true, ...(returned !== token ? { rotated: returned } : {}) };
+    return { valid: false };
+  } catch (e) {
+    console.error("NPSSO validity check failed", e);
+    // Make sure the rule is gone even if the failure happened before the
+    // fetch's own finally could run (e.g. addRules itself threw).
+    try {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [CHECK_DNR_RULE_ID] });
+    } catch {}
+    return null;
+  }
+}
+
+// Writes a check result to the account row. Rotates the stored token when Sony
+// returned a fresh one for the same session.
+async function persistCheckResult(id, result) {
+  const accounts = await loadAccounts();
+  let changed = false;
+  const next = accounts.map((a) => {
+    if (a.id !== id) return a;
+    changed = true;
+    return {
+      ...a,
+      npssoValid: result.valid,
+      npssoCheckedAt: Date.now(),
+      ...(result.rotated ? { npsso: result.rotated, npssoFetchedAt: Date.now() } : {}),
+    };
+  });
+  if (changed) await saveAccounts(next);
+}
+
+// Guarded entry point for a single-account check (the checkNpsso message).
+// Refuses while a sign-in or refresh could be in flight so the DNR rule and
+// the capture pipeline never overlap. An indeterminate result records nothing.
+async function runSingleCheck(id) {
+  if (refreshing || pendingAccountId || checking) return;
+  const account = (await loadAccounts()).find((a) => a.id === id);
+  if (!account?.npsso) return;
+  const result = await checkNpsso(account);
+  if (result) await persistCheckResult(id, result);
+}
+
 // True while a refresh-all queue is looping; single sign-ins are locked out
 // for its duration (and refreshAll is a no-op while a single sign-in pends).
 let refreshing = false;
 let refreshCancelRequested = false;
+
+// True while a check-all queue is looping; single sign-ins and refresh-all are
+// locked out for its duration, and checkAllNpsso is a no-op while a sign-in or
+// refresh is active.
+let checking = false;
+let checkCancelRequested = false;
 
 function setRefreshState(state) {
   return new Promise((resolve) => {
@@ -452,12 +560,14 @@ async function refreshAll() {
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.action === "openSignIn") {
-    if (refreshing) return;
+    if (refreshing || checking) return;
     openSignIn(msg.email, msg.password, msg.id).catch(console.error);
   } else if (msg.action === "refreshAll") {
     refreshAll().catch(console.error);
   } else if (msg.action === "cancelRefreshAll") {
     refreshCancelRequested = true;
+  } else if (msg.action === "checkNpsso") {
+    runSingleCheck(msg.id).catch(console.error);
   } else if (msg.action === "psnProfileCaptured") {
     // sender.tab is the playstation.com tab that relayed the capture; its
     // window determines which cookie store the NPSSO token is read from.

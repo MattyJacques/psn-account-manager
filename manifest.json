@@ -19,7 +19,7 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["storage", "clipboardWrite", "tabs", "scripting"],
+  "permissions": ["storage", "clipboardWrite", "tabs", "scripting", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["https://www.playstation.com/*", "https://my.account.sony.com/*", "https://ca.account.sony.com/*"],
   "background": {
     "service_worker": "background.js"
