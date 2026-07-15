@@ -5,64 +5,90 @@
   <title>PSN Account Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <header>
-    <div class="brand">
-      <div class="brand-mark">P</div>
-      <span class="brand-name">PSN</span>
-      <span class="brand-sub">/ Accounts</span>
+    <div class="brand-mark">
+      <div class="brand-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
     </div>
+    <div class="brand-text">
+      <div class="brand-name">PSN Account Manager</div>
+      <div class="brand-sub"><span id="versionTag">v1.0.0</span> · local vault</div>
+    </div>
+    <div class="header-spacer"></div>
     <div class="header-actions">
-      <button type="button" id="refreshAllBtn" class="add-btn">
-        <svg class="refresh-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="23 4 23 10 17 10" />
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+      <button type="button" id="refreshAllBtn" class="hdr-btn">
+        <svg class="hdr-icon refresh-icon" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 3a5 5 0 1 0 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <path d="M13 4.2 15.5 9h-5z" fill="currentColor" />
         </svg>
-        <span id="refreshAllLabel">Refresh All</span>
+        <span id="refreshAllLabel">All</span>
+        <span class="btn-divider" aria-hidden="true"></span>
+        <span class="btn-x" aria-hidden="true">✕</span>
       </button>
-      <button type="button" id="checkAllBtn" class="add-btn">
-        <svg class="check-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M9 12l2 2 4-4" />
-          <circle cx="12" cy="12" r="9" />
+      <button type="button" id="checkAllBtn" class="hdr-btn">
+        <svg class="hdr-icon check-icon" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2.5 8.5 6 12l7.5-8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        <span id="checkAllLabel">Check All</span>
+        <svg class="hdr-icon spin-icon" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.96" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+        </svg>
+        <span id="checkAllLabel">All</span>
+        <span class="btn-divider" aria-hidden="true"></span>
+        <span class="btn-x" aria-hidden="true">✕</span>
       </button>
-      <button type="button" id="addBtn" class="add-btn">+ New</button>
+      <button type="button" id="addBtn" class="hdr-btn new-btn">
+        <span class="plus" aria-hidden="true">+</span>
+        <span>New</span>
+      </button>
     </div>
   </header>
 
-  <main>
-    <form id="accountForm" class="account-form hidden" autocomplete="off">
-      <input type="hidden" id="editId" value="" />
-      <div class="form-header">
-        <span id="formTitle" class="form-title">New account</span>
-        <button type="button" id="cancelBtn" class="close-btn" aria-label="Close">✕</button>
-      </div>
-      <label class="field-group">
-        <span class="field-label">Label</span>
+  <form id="accountForm" class="account-form hidden" autocomplete="off">
+    <input type="hidden" id="editId" value="" />
+    <div class="form-header">
+      <span id="formTitle" class="form-title">New account</span>
+      <span id="formSubtitle" class="form-subtitle"></span>
+      <div class="form-spacer"></div>
+      <button type="button" id="cancelBtn" class="close-btn" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="form-fields">
+      <div class="field-group">
+        <label class="field-label" for="label">Label</label>
         <input type="text" id="label" placeholder="My account nickname" maxlength="40" />
-      </label>
-      <label class="field-group">
-        <span class="field-label">Email</span>
-        <input type="email" id="email" class="mono" placeholder="you@example.com" required maxlength="120" />
-      </label>
-      <label class="field-group">
-        <span class="field-label">Password</span>
-        <input type="password" id="password" class="mono" placeholder="••••••••••" maxlength="120" />
-      </label>
-      <p id="formError" class="error hidden"></p>
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="email">Email</label>
+        <input type="email" id="email" class="mono" placeholder="you@example.com" maxlength="120" />
+        <div id="emailError" class="field-error hidden"><span class="err-dot"></span><span class="err-text"></span></div>
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="password">Password</label>
+        <input type="password" id="password" class="mono pw" placeholder="••••••••••" maxlength="120" />
+        <div id="passwordError" class="field-error hidden"><span class="err-dot"></span><span class="err-text"></span></div>
+      </div>
       <div class="form-actions">
         <button type="button" id="cancelBtn2" class="ghost-btn">Cancel</button>
         <button type="submit" id="saveBtn" class="primary-btn">Save</button>
       </div>
-    </form>
+    </div>
+  </form>
 
-    <div class="group-label" id="groupLabel" aria-live="polite"></div>
+  <main>
     <div id="accountList" class="account-list hidden"></div>
-    <p id="emptyState" class="empty-state hidden">No accounts yet — click + New to add one.</p>
+    <div id="emptyState" class="empty-state hidden">
+      <div class="empty-icon">
+        <div class="brand-dots empty-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="empty-title">No accounts yet</div>
+      <p class="empty-desc">Add a PSN account to start capturing NPSSO tokens and monitoring their validity — everything stays in this browser.</p>
+      <button type="button" id="emptyAddBtn" class="empty-add-btn">
+        <span class="plus" aria-hidden="true">+</span>
+        <span>Add your first account</span>
+      </button>
+    </div>
   </main>
 
   <footer>

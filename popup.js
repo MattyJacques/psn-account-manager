@@ -60,37 +60,41 @@ function parseCSV(text) {
 }
 
 const AVATAR_GRADIENTS = [
-  ["#3a91ff", "#0a4bd6"],
-  ["#8b5cf6", "#6d28d9"],
-  ["#14b8a6", "#0d9488"],
-  ["#fb7185", "#e11d48"],
-  ["#fb923c", "#ea580c"],
-  ["#f472b6", "#db2777"],
-  ["#a3e635", "#65a30d"],
-  ["#e879f9", "#a21caf"],
+  ["#2b8f5c", "#1f6a9a"],
+  ["#2b5db8", "#6a4fd8"],
+  ["#b8862b", "#d8674f"],
+  ["#8c3a68", "#5b2a48"],
+  ["#3f7dfd", "#7a4ffd"],
+  ["#1f8a9a", "#2b5db8"],
 ];
+// Desaturated gradients for rows without a live token.
+const AVATAR_GRAY_EXPIRED = ["#41506b", "#2a3348"];
+const AVATAR_GRAY_NONE = ["#39435a", "#252d40"];
 
 // NPSSO tokens are valid for ~61 days from issue.
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NPSSO_TTL_DAYS = 61;
 const NPSSO_WARN_DAYS = 51;
 
-const STATUS_META = {
-  active:   { label: "NPSSO ACTIVE",  color: "#2fd3a0" },
-  soon:     { label: "EXPIRING SOON", color: "#f5b945" },
-  expired:  { label: "EXPIRED",       color: "#ff5d6c" },
-  invalid:  { label: "INVALID",       color: "#ff5d6c" },
-  none:     { label: "NOT FETCHED",   color: "#6b7689" },
-  fetching: { label: "FETCHING",      color: "#3a93ff" },
+const STATUS_LABEL = {
+  active:   "NPSSO ACTIVE",
+  soon:     "EXPIRING SOON",
+  expired:  "EXPIRED",
+  invalid:  "INVALID",
+  none:     "NOT FETCHED",
+  fetching: "FETCHING",
 };
+
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 const els = {
   list:       document.getElementById("accountList"),
-  groupLabel: document.getElementById("groupLabel"),
   footerStat: document.getElementById("footerStat"),
   empty:      document.getElementById("emptyState"),
+  emptyAddBtn: document.getElementById("emptyAddBtn"),
   form:       document.getElementById("accountForm"),
   formTitle:  document.getElementById("formTitle"),
+  formSubtitle: document.getElementById("formSubtitle"),
   editId:     document.getElementById("editId"),
   label:      document.getElementById("label"),
   email:      document.getElementById("email"),
@@ -99,7 +103,9 @@ const els = {
   addBtn:     document.getElementById("addBtn"),
   cancelBtn:  document.getElementById("cancelBtn"),
   cancelBtn2: document.getElementById("cancelBtn2"),
-  formError:  document.getElementById("formError"),
+  emailError: document.getElementById("emailError"),
+  passwordError: document.getElementById("passwordError"),
+  versionTag: document.getElementById("versionTag"),
   refreshAllBtn: document.getElementById("refreshAllBtn"),
   refreshAllLabel: document.getElementById("refreshAllLabel"),
   checkAllBtn:   document.getElementById("checkAllBtn"),
@@ -113,7 +119,7 @@ let expandedId = null;
 let fetchingId = null;
 let checkingId = null;
 // Progress of a background check-all run ({running, index, total, activeId}
-// under CHECK_KEY), or null when idle. Populated in Task 4.
+// under CHECK_KEY), or null when idle.
 let checkState = null;
 // Progress of a background refresh-all run ({running, index, total, activeId}
 // published under REFRESH_KEY), or null when idle. Owned by the background
@@ -139,13 +145,17 @@ function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-function setError(msg) {
-  if (!msg) {
-    els.formError.classList.add("hidden");
-    els.formError.textContent = "";
-  } else {
-    els.formError.textContent = msg;
-    els.formError.classList.remove("hidden");
+function setFieldError(errorEl, input, msg) {
+  errorEl.querySelector(".err-text").textContent = msg;
+  errorEl.classList.remove("hidden");
+  input.classList.add("invalid");
+}
+
+function clearFieldErrors() {
+  for (const [errorEl, input] of [[els.emailError, els.email], [els.passwordError, els.password]]) {
+    errorEl.classList.add("hidden");
+    errorEl.querySelector(".err-text").textContent = "";
+    input.classList.remove("invalid");
   }
 }
 
@@ -153,9 +163,11 @@ function resetForm() {
   els.form.reset();
   els.editId.value = "";
   els.formTitle.textContent = "New account";
+  els.formSubtitle.textContent = "";
   els.saveBtn.textContent = "Save";
-  setError("");
+  clearFieldErrors();
   els.form.classList.add("hidden");
+  els.addBtn.classList.remove("open");
 }
 
 function startEdit(account) {
@@ -164,20 +176,17 @@ function startEdit(account) {
   els.email.value = account.email || "";
   els.password.value = account.password || "";
   els.formTitle.textContent = "Edit account";
-  els.saveBtn.textContent = "Update";
-  setError("");
+  els.formSubtitle.textContent = `· ${account.label || account.email}`;
+  els.saveBtn.textContent = "Save changes";
+  clearFieldErrors();
   els.form.classList.remove("hidden");
+  els.addBtn.classList.add("open");
   els.label.focus();
   els.form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function avatarStyle(index) {
-  const [a, b] = AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length];
-  return `background: linear-gradient(135deg, ${a}, ${b})`;
-}
-
-function npssoStatus(account) {
-  if (fetchingId === account.id || refreshState?.activeId === account.id) return "fetching";
+// Status from stored data alone (never "fetching") — used for footer counts.
+function baseStatus(account) {
   if (!account.npsso) return "none";
   // A server check that came back invalid and is at least as recent as the
   // stored token overrides the age heuristic. A valid check does NOT extend
@@ -191,6 +200,11 @@ function npssoStatus(account) {
   return "active";
 }
 
+function npssoStatus(account) {
+  if (fetchingId === account.id || refreshState?.activeId === account.id) return "fetching";
+  return baseStatus(account);
+}
+
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 60) return s + "s ago";
@@ -201,32 +215,122 @@ function timeAgo(ts) {
   return Math.floor(h / 24) + "d ago";
 }
 
-function line(key, value, muted) {
-  const wrap = document.createElement("div");
-  wrap.className = "acct-line";
-  const keyEl = document.createElement("span");
-  keyEl.className = "acct-key";
-  keyEl.textContent = key;
-  const valEl = document.createElement("span");
-  valEl.className = muted ? "acct-val muted" : "acct-val";
-  valEl.textContent = value;
-  valEl.title = value;
-  wrap.appendChild(keyEl);
-  wrap.appendChild(valEl);
-  return wrap;
+function expiryDaysLeft(account) {
+  const expiresAt = (account.npssoFetchedAt || 0) + NPSSO_TTL_DAYS * DAY_MS;
+  return Math.ceil((expiresAt - Date.now()) / DAY_MS);
 }
 
-function detailBox(key, value, isToken) {
-  const box = document.createElement("div");
-  box.className = "detail-box";
+function svgEl(width, height, children, extraClass) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("fill", "none");
+  if (extraClass) svg.setAttribute("class", extraClass);
+  for (const [tag, attrs] of children) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    svg.appendChild(node);
+  }
+  return svg;
+}
+
+function chevronSvg() {
+  return svgEl(12, 12, [["path", {
+    d: "M3 6l5 5 5-5", stroke: "#5b647a", "stroke-width": "1.8",
+    "stroke-linecap": "round", "stroke-linejoin": "round",
+  }]], "chevron");
+}
+
+function spinnerSvg(size, extraClass) {
+  return svgEl(size, size, [["path", {
+    d: "M13.5 8a5.5 5.5 0 1 1-1.7-3.96", stroke: "currentColor",
+    "stroke-width": "2.2", "stroke-linecap": "round",
+  }]], extraClass);
+}
+
+function copySvg() {
+  return svgEl(11, 11, [
+    ["rect", { x: "5.5", y: "5.5", width: "8", height: "8", rx: "1.5", stroke: "currentColor", "stroke-width": "1.5" }],
+    ["path", { d: "M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2", stroke: "currentColor", "stroke-width": "1.5" }],
+  ]);
+}
+
+function checkSvg(color) {
+  return svgEl(12, 12, [["path", {
+    d: "M2.5 8.5 6 12l7.5-8", stroke: color, "stroke-width": "1.8",
+    "stroke-linecap": "round", "stroke-linejoin": "round",
+  }]]);
+}
+
+function maskedNpsso(token) {
+  return "npsso ••••••••" + token.slice(-4);
+}
+
+function copyIconBtn(getValue) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "copy-btn";
+  btn.title = "Copy";
+  btn.appendChild(copySvg());
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(getValue());
+    btn.classList.add("copied");
+    setTimeout(() => btn.classList.remove("copied"), 1500);
+  });
+  return btn;
+}
+
+function kvRow(key, value, isToken, copyValue) {
+  const row = document.createElement("div");
+  row.className = "kv";
   const keyEl = document.createElement("span");
-  keyEl.className = "detail-key";
+  keyEl.className = "kv-key";
   keyEl.textContent = key;
   const valEl = document.createElement("span");
-  valEl.className = isToken ? "detail-val token" : "detail-val";
+  valEl.className = isToken ? "kv-val token" : "kv-val";
   valEl.textContent = value;
-  box.appendChild(keyEl);
-  box.appendChild(valEl);
+  row.appendChild(keyEl);
+  row.appendChild(valEl);
+  if (copyValue) row.appendChild(copyIconBtn(() => copyValue));
+  return row;
+}
+
+function buildCheckBox(account) {
+  const box = document.createElement("div");
+  const valid = !!account.npssoValid;
+  box.className = valid ? "check-box valid" : "check-box invalid";
+
+  if (valid) {
+    box.appendChild(checkSvg("#43d17c"));
+  } else {
+    box.appendChild(svgEl(12, 12, [["path", {
+      d: "M4 4l8 8M12 4l-8 8", stroke: "#e5559c", "stroke-width": "1.8", "stroke-linecap": "round",
+    }]]));
+  }
+
+  const msg = document.createElement("span");
+  msg.className = "check-msg";
+  if (valid) {
+    const days = expiryDaysLeft(account);
+    msg.textContent = days >= 1
+      ? `Token valid — expires in ${days} day${days !== 1 ? "s" : ""}`
+      : "Token valid — expires today";
+  } else {
+    msg.textContent = "Token invalid — sign in again to refresh";
+  }
+  box.appendChild(msg);
+
+  const spacer = document.createElement("div");
+  spacer.className = "check-spacer";
+  box.appendChild(spacer);
+
+  const when = document.createElement("span");
+  when.className = "check-when";
+  when.textContent = `checked ${timeAgo(account.npssoCheckedAt)}`;
+  box.appendChild(when);
+
   return box;
 }
 
@@ -234,13 +338,12 @@ function buildDetail(account) {
   const detail = document.createElement("div");
   detail.className = "acct-detail";
 
-  detail.appendChild(detailBox("ACCOUNT ID", account.accountId || "—"));
+  detail.appendChild(kvRow("ACCOUNT ID", account.accountId || "—", false, account.accountId || null));
   if (account.npsso) {
-    detail.appendChild(detailBox("NPSSO TOKEN", account.npsso, true));
+    detail.appendChild(kvRow("NPSSO", account.npsso, true, account.npsso));
   }
-  if (account.npssoCheckedAt) {
-    const verdict = account.npssoValid ? "Valid" : "Invalid";
-    detail.appendChild(detailBox("LAST CHECK", `${verdict} · ${timeAgo(account.npssoCheckedAt)}`));
+  if (account.npsso && account.npssoCheckedAt) {
+    detail.appendChild(buildCheckBox(account));
   }
 
   const actions = document.createElement("div");
@@ -249,7 +352,7 @@ function buildDetail(account) {
   if (account.npsso) {
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
-    copyBtn.className = "action-btn";
+    copyBtn.className = "action-btn solid";
     copyBtn.textContent = "COPY NPSSO";
     copyBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -264,28 +367,6 @@ function buildDetail(account) {
     actions.appendChild(copyBtn);
   }
 
-  if (account.npsso) {
-    const checkBtn = document.createElement("button");
-    checkBtn.type = "button";
-    checkBtn.className = "action-btn";
-    checkBtn.textContent = checkingId === account.id ? "CHECKING…" : "CHECK NPSSO";
-    checkBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (checkingId || fetchingId || refreshState?.running || checkState?.running) return;
-      checkingId = account.id;
-      chrome.runtime.sendMessage({ action: "checkNpsso", id: account.id });
-      const stuckId = account.id;
-      setTimeout(() => {
-        if (checkingId === stuckId) {
-          checkingId = null;
-          renderAccounts(currentAccounts);
-        }
-      }, 15000);
-      renderAccounts(currentAccounts);
-    });
-    actions.appendChild(checkBtn);
-  }
-
   const editBtn = document.createElement("button");
   editBtn.type = "button";
   editBtn.className = "action-btn";
@@ -295,6 +376,10 @@ function buildDetail(account) {
     startEdit(account);
   });
   actions.appendChild(editBtn);
+
+  const spacer = document.createElement("div");
+  spacer.className = "detail-spacer";
+  actions.appendChild(spacer);
 
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
@@ -314,13 +399,128 @@ function buildDetail(account) {
   return detail;
 }
 
+function buildMeta(account, status) {
+  const meta = document.createElement("div");
+  meta.className = "acct-meta";
+
+  const hasToken = !!account.npsso;
+  const rowBusy = status === "fetching"
+    || checkingId === account.id
+    || (checkState?.running && checkState.activeId === account.id);
+
+  if (status === "fetching") {
+    const fetching = document.createElement("span");
+    fetching.className = "meta-fetching";
+    fetching.textContent = "capturing sign-in…";
+    meta.appendChild(fetching);
+  } else if (hasToken) {
+    const npssoEl = document.createElement("span");
+    npssoEl.className = status === "expired" ? "meta-npsso dead" : "meta-npsso";
+    npssoEl.textContent = maskedNpsso(account.npsso);
+    meta.appendChild(npssoEl);
+
+    const hint = document.createElement("span");
+    hint.className = "meta-hint";
+    if (status === "soon") {
+      hint.classList.add("warn");
+      const days = Math.max(expiryDaysLeft(account), 0);
+      hint.textContent = days >= 1 ? `· expires in ${days}d` : "· expires today";
+    } else if (status === "expired") {
+      hint.classList.add("danger");
+      const gone = Math.floor(-expiryDaysLeft(account));
+      hint.textContent = gone >= 1 ? `· expired ${gone}d ago` : "· expired today";
+    } else if (status === "invalid") {
+      hint.classList.add("invalid");
+      hint.textContent = `· check failed ${timeAgo(account.npssoCheckedAt)}`;
+    } else {
+      hint.textContent = `· fetched ${timeAgo(account.npssoFetchedAt)}`;
+    }
+    meta.appendChild(hint);
+  } else {
+    const npssoEl = document.createElement("span");
+    npssoEl.className = "meta-npsso muted";
+    npssoEl.textContent = "npsso — not captured";
+    meta.appendChild(npssoEl);
+  }
+
+  const spacer = document.createElement("div");
+  spacer.className = "meta-spacer";
+  meta.appendChild(spacer);
+
+  const live = hasToken && status !== "expired" && status !== "invalid";
+  const getBtn = document.createElement("button");
+  getBtn.type = "button";
+  getBtn.className = "row-btn sync";
+  getBtn.textContent = live ? "SYNC" : "GET";
+  getBtn.title = "Sign in to PSN and fetch NPSSO";
+  getBtn.disabled = rowBusy;
+  getBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (fetchingId || checkingId || refreshState?.running || checkState?.running) return;
+    fetchingId = account.id;
+    chrome.runtime.sendMessage({ action: "openSignIn", id: account.id, email: account.email, password: account.password });
+    renderAccounts(currentAccounts);
+  });
+  meta.appendChild(getBtn);
+
+  const checkBtn = document.createElement("button");
+  checkBtn.type = "button";
+  checkBtn.className = "row-btn";
+  checkBtn.textContent = checkingId === account.id ? "CHECKING" : "CHECK";
+  checkBtn.title = "Check whether the stored NPSSO token is still valid";
+  checkBtn.disabled = !hasToken || rowBusy;
+  checkBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (checkingId || fetchingId || refreshState?.running || checkState?.running) return;
+    checkingId = account.id;
+    chrome.runtime.sendMessage({ action: "checkNpsso", id: account.id });
+    const stuckId = account.id;
+    setTimeout(() => {
+      if (checkingId === stuckId) {
+        checkingId = null;
+        renderAccounts(currentAccounts);
+      }
+    }, 15000);
+    renderAccounts(currentAccounts);
+  });
+  meta.appendChild(checkBtn);
+
+  return meta;
+}
+
+function buildAvatar(account, index, status) {
+  const avatar = document.createElement("div");
+  avatar.className = "avatar";
+  let gradient;
+  if (status === "expired") {
+    gradient = AVATAR_GRAY_EXPIRED;
+    avatar.classList.add("dead");
+  } else if (status === "none") {
+    gradient = AVATAR_GRAY_NONE;
+    avatar.classList.add("dead");
+  } else {
+    gradient = AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length];
+  }
+  avatar.style.background = `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})`;
+  avatar.textContent = (account.label || account.email || "?").charAt(0).toUpperCase();
+  if (account.avatarUrl) {
+    const img = document.createElement("img");
+    img.className = "avatar-img";
+    img.alt = "";
+    img.addEventListener("error", () => img.remove()); // fall back to the gradient initial
+    img.src = account.avatarUrl;
+    avatar.appendChild(img);
+  }
+  return avatar;
+}
+
 function updateRefreshAllBtn(count) {
   const running = !!refreshState?.running;
   els.refreshAllBtn.disabled = count === 0 && !running;
   els.refreshAllBtn.classList.toggle("running", running);
   els.refreshAllLabel.textContent = running
     ? `${refreshState.index + 1}/${refreshState.total}`
-    : "Refresh All";
+    : "All";
   els.refreshAllBtn.title = running
     ? "Refreshing all accounts — click to cancel after the current one"
     : "Sign in to every account in turn and refresh its NPSSO";
@@ -333,10 +533,29 @@ function updateCheckAllBtn(accounts) {
   els.checkAllBtn.classList.toggle("running", running);
   els.checkAllLabel.textContent = running
     ? `${checkState.index + 1}/${checkState.total}`
-    : "Check All";
+    : "All";
   els.checkAllBtn.title = running
     ? "Checking every NPSSO — click to cancel after the current one"
     : "Check whether each stored NPSSO token is still valid";
+}
+
+function updateFooter(accounts) {
+  const count = accounts.length;
+  els.footerStat.textContent = "";
+  if (count === 0) {
+    els.footerStat.textContent = "0 accounts";
+  } else {
+    els.footerStat.append(`${count} account${count !== 1 ? "s" : ""}`);
+    const attention = accounts.filter((a) => ["soon", "expired", "invalid"].includes(baseStatus(a))).length;
+    if (attention > 0) {
+      els.footerStat.append(" · ");
+      const attn = document.createElement("span");
+      attn.className = "attn";
+      attn.textContent = `${attention} need${attention === 1 ? "s" : ""} attention`;
+      els.footerStat.appendChild(attn);
+    }
+  }
+  els.exportBtn.classList.toggle("dim", count === 0);
 }
 
 function renderAccounts(accounts) {
@@ -346,42 +565,27 @@ function renderAccounts(accounts) {
   const count = accounts.length;
   updateRefreshAllBtn(count);
   updateCheckAllBtn(accounts);
-  els.groupLabel.textContent = count > 0 ? `Accounts · ${count}` : "";
-  els.footerStat.textContent = count > 0 ? `${count} account${count !== 1 ? "s" : ""}` : "";
+  updateFooter(accounts);
   els.list.classList.toggle("hidden", count === 0);
   els.empty.classList.toggle("hidden", count > 0);
   if (count === 0) return;
 
   accounts.forEach((account, index) => {
     const status = npssoStatus(account);
-    const meta = STATUS_META[status];
     const isExpanded = expandedId === account.id;
-    const hasToken = !!account.npsso;
 
     const row = document.createElement("div");
-    row.className = isExpanded ? "acct expanded" : "acct";
-    row.style.borderLeftColor = meta.color;
+    row.className = `acct st-${status}${isExpanded ? " expanded" : ""}`;
 
     const main = document.createElement("div");
     main.className = "acct-main";
-    main.title = "Click to expand";
+    main.title = isExpanded ? "Click to collapse" : "Click to expand";
     main.addEventListener("click", () => {
       expandedId = isExpanded ? null : account.id;
       renderAccounts(accounts);
     });
 
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.style.cssText = avatarStyle(index);
-    avatar.textContent = (account.label || account.email || "?").charAt(0).toUpperCase();
-    if (account.avatarUrl) {
-      const img = document.createElement("img");
-      img.className = "avatar-img";
-      img.alt = "";
-      img.addEventListener("error", () => img.remove()); // fall back to the gradient initial
-      img.src = account.avatarUrl;
-      avatar.appendChild(img);
-    }
+    main.appendChild(buildAvatar(account, index, status));
 
     const info = document.createElement("div");
     info.className = "acct-info";
@@ -391,47 +595,25 @@ function renderAccounts(accounts) {
     const labelEl = document.createElement("span");
     labelEl.className = "acct-label";
     labelEl.textContent = account.label || account.email;
-    const statusEl = document.createElement("span");
-    statusEl.className = "acct-status";
-    statusEl.style.color = meta.color;
-    statusEl.textContent = meta.label;
     title.appendChild(labelEl);
-    title.appendChild(statusEl);
+
+    const badge = document.createElement("span");
+    badge.className = "acct-badge";
+    if (status === "fetching") badge.appendChild(spinnerSvg(8, "badge-spin"));
+    badge.append(STATUS_LABEL[status]);
+    title.appendChild(badge);
     info.appendChild(title);
 
-    info.appendChild(
-      account.onlineId ? line("PSN ID", account.onlineId) : line("PSN ID", "Not fetched", true),
-    );
-    info.appendChild(
-      hasToken
-        ? line("NPSSO", account.npsso.slice(0, 12) + " ••••••••")
-        : line("NPSSO", "Not fetched", true),
-    );
+    const sub = document.createElement("span");
+    sub.className = "acct-sub";
+    sub.textContent = account.onlineId || "— no online ID yet";
+    info.appendChild(sub);
 
-    const side = document.createElement("div");
-    side.className = "acct-side";
-    const timeEl = document.createElement("span");
-    timeEl.className = "acct-time";
-    timeEl.textContent = account.npssoFetchedAt ? timeAgo(account.npssoFetchedAt) : "never";
-    const getBtn = document.createElement("button");
-    getBtn.type = "button";
-    getBtn.className = hasToken ? "get-btn" : "get-btn primary";
-    getBtn.textContent = status === "fetching" ? "SYNC…" : hasToken ? "SYNC" : "GET";
-    getBtn.title = "Sign in to PSN and fetch NPSSO";
-    getBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (fetchingId || checkingId || refreshState?.running || checkState?.running) return;
-      fetchingId = account.id;
-      chrome.runtime.sendMessage({ action: "openSignIn", id: account.id, email: account.email, password: account.password });
-      renderAccounts(accounts);
-    });
-    side.appendChild(timeEl);
-    side.appendChild(getBtn);
-
-    main.appendChild(avatar);
     main.appendChild(info);
-    main.appendChild(side);
+    main.appendChild(chevronSvg());
     row.appendChild(main);
+
+    row.appendChild(buildMeta(account, status));
 
     if (isExpanded) row.appendChild(buildDetail(account));
 
@@ -439,15 +621,22 @@ function renderAccounts(accounts) {
   });
 }
 
+function openForm() {
+  resetForm();
+  els.form.classList.remove("hidden");
+  els.addBtn.classList.add("open");
+  els.label.focus();
+}
+
 els.addBtn.addEventListener("click", () => {
   if (els.form.classList.contains("hidden")) {
-    resetForm();
-    els.form.classList.remove("hidden");
-    els.label.focus();
+    openForm();
   } else {
     resetForm();
   }
 });
+
+els.emptyAddBtn.addEventListener("click", openForm);
 
 els.refreshAllBtn.addEventListener("click", () => {
   if (refreshState?.running) {
@@ -474,17 +663,23 @@ els.cancelBtn2.addEventListener("click", resetForm);
 
 els.form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  setError("");
+  clearFieldErrors();
 
   const id = els.editId.value;
   const label = els.label.value.trim();
   const email = els.email.value.trim();
   const password = els.password.value;
 
-  if (!email || !password) {
-    setError("Email and password are required.");
-    return;
+  let bad = false;
+  if (!email) {
+    setFieldError(els.emailError, els.email, "Email is required.");
+    bad = true;
   }
+  if (!password) {
+    setFieldError(els.passwordError, els.password, "Password is required.");
+    bad = true;
+  }
+  if (bad) return;
 
   const accounts = await loadAccounts();
 
@@ -492,7 +687,7 @@ els.form.addEventListener("submit", async (e) => {
     (a) => a.email.toLowerCase() === email.toLowerCase() && a.id !== id,
   );
   if (duplicate) {
-    setError("An account with this email already exists.");
+    setFieldError(els.emailError, els.email, `This email is already used by “${duplicate.label || duplicate.email}”.`);
     return;
   }
 
@@ -604,6 +799,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 (async function init() {
+  els.versionTag.textContent = "v" + chrome.runtime.getManifest().version;
   const [accounts, storedRefresh, storedCheck] = await Promise.all([
     loadAccounts(),
     new Promise((resolve) => {
