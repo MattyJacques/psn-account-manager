@@ -403,7 +403,8 @@ async function checkNpsso(account) {
     } finally {
       await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [CHECK_DNR_RULE_ID] });
     }
-    if (!res.ok) return { valid: false };
+    if (res.status >= 500) return null; // server-side outage — indeterminate, don't brand invalid
+    if (!res.ok) return { valid: false }; // 4xx — token rejected
     let json;
     try {
       json = await res.json();
@@ -449,8 +450,13 @@ async function runSingleCheck(id) {
   if (refreshing || pendingAccountId || checking) return;
   const account = (await loadAccounts()).find((a) => a.id === id);
   if (!account?.npsso) return;
-  const result = await checkNpsso(account);
-  if (result) await persistCheckResult(id, result);
+  checking = true;
+  try {
+    const result = await checkNpsso(account);
+    if (result) await persistCheckResult(id, result);
+  } finally {
+    checking = false;
+  }
 }
 
 // True while a refresh-all queue is looping; single sign-ins are locked out
@@ -458,9 +464,11 @@ async function runSingleCheck(id) {
 let refreshing = false;
 let refreshCancelRequested = false;
 
-// True while a check-all queue is looping; single sign-ins and refresh-all are
-// locked out for its duration, and checkAllNpsso is a no-op while a sign-in or
-// refresh is active.
+// True while any NPSSO check (single check or check-all queue) is in flight;
+// single sign-ins and refresh-all are locked out for its duration, and both
+// runSingleCheck and checkAllNpsso are a no-op while a sign-in, refresh, or
+// another check is active — this also keeps two concurrent single checks
+// from racing on the shared CHECK_DNR_RULE_ID.
 let checking = false;
 let checkCancelRequested = false;
 
