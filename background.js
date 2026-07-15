@@ -479,6 +479,38 @@ function setRefreshState(state) {
   });
 }
 
+function setCheckState(state) {
+  return new Promise((resolve) => {
+    if (state) chrome.storage.local.set({ [CHECK_KEY]: state }, resolve);
+    else chrome.storage.local.remove(CHECK_KEY, resolve);
+  });
+}
+
+// Checks every stored account that has an NPSSO, one at a time (the DNR rule is
+// a single slot). Each result is written as it lands; an indeterminate result
+// (network failure) records nothing and the loop moves on — a per-account
+// failure never stops the run, only cancellation does. Progress is published
+// to CHECK_KEY so the popup can render it across close/reopen.
+async function checkAllNpsso() {
+  if (checking || refreshing || pendingAccountId) return;
+  const targets = (await loadAccounts()).filter((a) => a.npsso);
+  if (targets.length === 0) return;
+  checking = true;
+  checkCancelRequested = false;
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      if (checkCancelRequested) break;
+      const account = targets[i];
+      await setCheckState({ running: true, index: i, total: targets.length, activeId: account.id });
+      const result = await checkNpsso(account);
+      if (result) await persistCheckResult(account.id, result);
+    }
+  } finally {
+    checking = false;
+    await setCheckState(null);
+  }
+}
+
 async function closeTabs(tabIds) {
   for (const tabId of tabIds ?? []) {
     try {
@@ -504,7 +536,7 @@ const ACCOUNT_RETRY_DELAY_MS = 5000;
 // Progress is published to REFRESH_KEY so the popup can render it across
 // close/reopen.
 async function refreshAll() {
-  if (refreshing || pendingAccountId) return;
+  if (refreshing || pendingAccountId || checking) return;
   const accounts = await loadAccounts();
   if (accounts.length === 0) return;
   refreshing = true;
@@ -576,6 +608,10 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     refreshCancelRequested = true;
   } else if (msg.action === "checkNpsso") {
     runSingleCheck(msg.id).catch(console.error);
+  } else if (msg.action === "checkAllNpsso") {
+    checkAllNpsso().catch(console.error);
+  } else if (msg.action === "cancelCheckAll") {
+    checkCancelRequested = true;
   } else if (msg.action === "psnProfileCaptured") {
     // sender.tab is the playstation.com tab that relayed the capture; its
     // window determines which cookie store the NPSSO token is read from.
