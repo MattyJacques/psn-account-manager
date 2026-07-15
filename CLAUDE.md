@@ -34,7 +34,7 @@ The extension has two entry points:
 - All state lives in `chrome.storage.local` under the key `"psn_accounts"` as a JSON array
 - `loadAccounts()` / `saveAccounts()` are the only storage access points
 - `renderAccounts()` rebuilds the entire account list DOM from the in-memory array on every state change — there is no partial/incremental update
-- `"psn_refresh_state"` is the only other storage key — refresh-all queue progress, written solely by the background worker, read-only in the popup
+- `"psn_refresh_state"` and `"psn_check_state"` are the other two storage keys — refresh-all and check-all queue progress respectively, each written solely by the background worker and read-only in the popup
 
 **Account object shape:**
 ```js
