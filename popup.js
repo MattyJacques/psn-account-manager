@@ -1,9 +1,11 @@
 const STORAGE_KEY = "psn_accounts";
 const REFRESH_KEY = "psn_refresh_state";
+const CHECK_KEY = "psn_check_state";
 
 const CSV_FIELDS = [
   "id", "label", "email", "password", "notes", "createdAt", "updatedAt",
   "accountId", "onlineId", "profileFetchedAt", "npsso", "npssoFetchedAt", "avatarUrl",
+  "npssoValid", "npssoCheckedAt",
 ];
 
 function csvEscape(value) {
@@ -77,6 +79,7 @@ const STATUS_META = {
   active:   { label: "NPSSO ACTIVE",  color: "#2fd3a0" },
   soon:     { label: "EXPIRING SOON", color: "#f5b945" },
   expired:  { label: "EXPIRED",       color: "#ff5d6c" },
+  invalid:  { label: "INVALID",       color: "#ff5d6c" },
   none:     { label: "NOT FETCHED",   color: "#6b7689" },
   fetching: { label: "FETCHING",      color: "#3a93ff" },
 };
@@ -106,6 +109,10 @@ const els = {
 
 let expandedId = null;
 let fetchingId = null;
+let checkingId = null;
+// Progress of a background check-all run ({running, index, total, activeId}
+// under CHECK_KEY), or null when idle. Populated in Task 4.
+let checkState = null;
 // Progress of a background refresh-all run ({running, index, total, activeId}
 // published under REFRESH_KEY), or null when idle. Owned by the background
 // worker so it survives the popup closing when sign-in tabs open.
@@ -170,6 +177,12 @@ function avatarStyle(index) {
 function npssoStatus(account) {
   if (fetchingId === account.id || refreshState?.activeId === account.id) return "fetching";
   if (!account.npsso) return "none";
+  // A server check that came back invalid and is at least as recent as the
+  // stored token overrides the age heuristic. A valid check does NOT extend
+  // the EXPIRING SOON / EXPIRED thresholds — age still governs those.
+  if (account.npssoValid === false && (account.npssoCheckedAt || 0) >= (account.npssoFetchedAt || 0)) {
+    return "invalid";
+  }
   const age = Date.now() - (account.npssoFetchedAt || 0);
   if (age >= NPSSO_TTL_DAYS * DAY_MS) return "expired";
   if (age >= NPSSO_WARN_DAYS * DAY_MS) return "soon";
@@ -223,6 +236,10 @@ function buildDetail(account) {
   if (account.npsso) {
     detail.appendChild(detailBox("NPSSO TOKEN", account.npsso, true));
   }
+  if (account.npssoCheckedAt) {
+    const verdict = account.npssoValid ? "Valid" : "Invalid";
+    detail.appendChild(detailBox("LAST CHECK", `${verdict} · ${timeAgo(account.npssoCheckedAt)}`));
+  }
 
   const actions = document.createElement("div");
   actions.className = "detail-actions";
@@ -243,6 +260,21 @@ function buildDetail(account) {
       }, 1500);
     });
     actions.appendChild(copyBtn);
+  }
+
+  if (account.npsso) {
+    const checkBtn = document.createElement("button");
+    checkBtn.type = "button";
+    checkBtn.className = "action-btn";
+    checkBtn.textContent = checkingId === account.id ? "CHECKING…" : "CHECK NPSSO";
+    checkBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (checkingId || fetchingId || refreshState?.running || checkState?.running) return;
+      checkingId = account.id;
+      chrome.runtime.sendMessage({ action: "checkNpsso", id: account.id });
+      renderAccounts(currentAccounts);
+    });
+    actions.appendChild(checkBtn);
   }
 
   const editBtn = document.createElement("button");
@@ -365,7 +397,7 @@ function renderAccounts(accounts) {
     getBtn.title = "Sign in to PSN and fetch NPSSO";
     getBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (fetchingId || refreshState?.running) return;
+      if (fetchingId || refreshState?.running || checkState?.running) return;
       fetchingId = account.id;
       chrome.runtime.sendMessage({ action: "openSignIn", id: account.id, email: account.email, password: account.password });
       renderAccounts(accounts);
@@ -447,6 +479,8 @@ els.form.addEventListener("submit", async (e) => {
         delete updated.npsso;
         delete updated.npssoFetchedAt;
         delete updated.avatarUrl;
+        delete updated.npssoValid;
+        delete updated.npssoCheckedAt;
       }
       return updated;
     });
@@ -521,12 +555,16 @@ els.importFile.addEventListener("change", async (e) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (!changes[STORAGE_KEY] && !changes[REFRESH_KEY]) return;
+  if (!changes[STORAGE_KEY] && !changes[REFRESH_KEY] && !changes[CHECK_KEY]) return;
   if (changes[REFRESH_KEY]) {
     refreshState = changes[REFRESH_KEY].newValue ?? null;
   }
+  if (changes[CHECK_KEY]) {
+    checkState = changes[CHECK_KEY].newValue ?? null;
+  }
   if (changes[STORAGE_KEY]) {
     fetchingId = null;
+    checkingId = null;
     currentAccounts = Array.isArray(changes[STORAGE_KEY].newValue) ? changes[STORAGE_KEY].newValue : [];
   }
   renderAccounts(currentAccounts);
