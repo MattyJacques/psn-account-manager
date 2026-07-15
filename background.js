@@ -652,8 +652,8 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
   if (outcome !== "signin-clicked") {
     // Don't barrel on into a guaranteed 30s "Timed out waiting for Sony auth
     // page" — fail now with the real reason: the sign-in button was never
-    // clicked (toolbar never mounted, sign-out never completed, or Sony
-    // changed the toolbar/dropdown selectors).
+    // clicked (toolbar never mounted, the local cookie-clear + re-navigate never
+    // reached a logged-out toolbar, or Sony changed the toolbar selectors).
     throw new Error(`Toolbar drive ended in "${outcome}" without clicking sign-in`);
   }
 
