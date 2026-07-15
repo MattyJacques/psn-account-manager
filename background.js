@@ -638,11 +638,13 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
 
   let outcome = await driveToolbar(tab.id);
 
-  // Signing out normally reloads the page; if Sony ever signs out in-place
-  // without navigating, fall through after the timeout and try anyway.
-  // Tolerate one stale re-render that still shows the profile icon (a second
-  // "logged-out") before giving up.
-  for (let signOuts = 0; outcome === "logged-out" && signOuts < 2; signOuts++) {
+  // An account is signed in. Log it out LOCALLY (delete cookies, no server-side
+  // sign-out) so its NPSSO stays valid, then FRESH-NAVIGATE (not reload — a soft
+  // reload can restore the signed-in page from the bfcache, verified in Phase 0)
+  // and re-drive to the sign-in click. Tolerate up to 2 cycles.
+  for (let logouts = 0; outcome === "needs-logout" && logouts < 2; logouts++) {
+    await clearSonyCookies();
+    await chrome.tabs.update(tab.id, { url: "https://www.playstation.com/en-gb/" });
     await waitForTabLoad(tab.id, 15_000).catch(() => {});
     outcome = await driveToolbar(tab.id);
   }
@@ -866,37 +868,23 @@ async function watchAuthInterstitials(authTabId, ATTEMPTS = 60, INTERVAL_MS = 50
 }
 
 // Drives the toolbar on the PlayStation homepage. If an account is already
-// signed in (profile icon present), opens the profile dropdown and clicks
-// sign-out; otherwise clicks the sign-in button. Resolves to "signin-clicked",
-// "logged-out", or "timeout".
+// signed in (profile icon present), reports back so the caller can clear
+// cookies locally instead of clicking sign-out; otherwise clicks the sign-in
+// button. Resolves to "signin-clicked", "needs-logout", or "timeout".
 async function driveToolbar(tabId) {
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
       return new Promise((resolve) => {
-        function trySignOut(attemptsLeft) {
-          if (attemptsLeft === 0) return resolve("timeout");
-          // Full path is "web-toolbar#profile-container#profile-dropdown#
-          // item-list#sign-out#button" — suffix match for the same reason
-          // as the sign-in button below.
-          const btn = document.querySelector('[data-qa$="sign-out#button"]');
-          if (!btn) {
-            setTimeout(() => trySignOut(attemptsLeft - 1), 200);
-            return;
-          }
-          btn.click();
-          resolve("logged-out");
-        }
-
         function tryToolbar(attemptsLeft) {
           if (attemptsLeft === 0) return resolve("timeout");
           // Full path is "web-toolbar#profile-container#profile-icon#image#image".
           const profileIcon = document.querySelector('[data-qa$="profile-icon#image#image"]');
           if (profileIcon) {
-            // An account is already signed in — sign it out first.
-            profileIcon.click();
-            trySignOut(25); // poll up to 5 s for the dropdown to open
-            return;
+            // An account is signed in. Do NOT click sign-out — that revokes the
+            // SSO session server-side and kills the account's NPSSO. Report back
+            // so the caller can clear cookies locally instead.
+            return resolve("needs-logout");
           }
           // data-qa is the most stable hook, but Sony renames its container path
           // (e.g. "web-toolbar#profile-container#signin-button"), so match by
@@ -917,6 +905,34 @@ async function driveToolbar(tabId) {
     },
   });
   return result;
+}
+
+// Logs the current account out LOCALLY by deleting the specific Sony/PlayStation
+// login + SSO cookies from the browser's cookie store — WITHOUT hitting Sony's
+// server-side sign-out. The server session (and therefore the account's NPSSO)
+// stays valid; only the local browser forgets it, so the toolbar renders
+// logged-out and the next account can sign in fresh with no re-auth bounce.
+// Cookie names + URLs verified minimal in Phase 0; every removal URL is covered
+// by a host permission already in the manifest (no new host perms needed). Runs
+// in the worker, which owns the cookie store. If Sony renames a cookie, its
+// removal silently no-ops and the toolbar stays signed-in — driveSignInFlow's
+// fallback then fails the account rather than clicking sign-out, so a rename
+// degrades safely (no NPSSO is ever revoked).
+async function clearSonyCookies() {
+  const TARGETS = [
+    { url: "https://ca.account.sony.com/", names: ["npsso", "JSESSIONID", "dars", "KP_uIDz-ssn"] },
+    { url: "https://my.account.sony.com/", names: ["KP_uIDz-ssn"] },
+    { url: "https://www.playstation.com/", names: ["isSignedIn", "pdccws_p", "session", "userinfo", "pdcsi", "pdcws2"] },
+  ];
+  for (const { url, names } of TARGETS) {
+    for (const name of names) {
+      try {
+        await chrome.cookies.remove({ url, name });
+      } catch (e) {
+        console.warn(`clearSonyCookies: could not remove ${name} via ${url}`, e);
+      }
+    }
+  }
 }
 
 // Waits for the Sony auth page to load in either the original tab (same-tab
