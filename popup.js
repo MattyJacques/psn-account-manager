@@ -102,6 +102,8 @@ const els = {
   formError:  document.getElementById("formError"),
   refreshAllBtn: document.getElementById("refreshAllBtn"),
   refreshAllLabel: document.getElementById("refreshAllLabel"),
+  checkAllBtn:   document.getElementById("checkAllBtn"),
+  checkAllLabel: document.getElementById("checkAllLabel"),
   exportBtn:  document.getElementById("exportBtn"),
   importBtn:  document.getElementById("importBtn"),
   importFile: document.getElementById("importFile"),
@@ -272,6 +274,13 @@ function buildDetail(account) {
       if (checkingId || fetchingId || refreshState?.running || checkState?.running) return;
       checkingId = account.id;
       chrome.runtime.sendMessage({ action: "checkNpsso", id: account.id });
+      const stuckId = account.id;
+      setTimeout(() => {
+        if (checkingId === stuckId) {
+          checkingId = null;
+          renderAccounts(currentAccounts);
+        }
+      }, 15000);
       renderAccounts(currentAccounts);
     });
     actions.appendChild(checkBtn);
@@ -317,12 +326,26 @@ function updateRefreshAllBtn(count) {
     : "Sign in to every account in turn and refresh its NPSSO";
 }
 
+function updateCheckAllBtn(accounts) {
+  const withToken = accounts.filter((a) => a.npsso).length;
+  const running = !!checkState?.running;
+  els.checkAllBtn.disabled = withToken === 0 && !running;
+  els.checkAllBtn.classList.toggle("running", running);
+  els.checkAllLabel.textContent = running
+    ? `${checkState.index + 1}/${checkState.total}`
+    : "Check All";
+  els.checkAllBtn.title = running
+    ? "Checking every NPSSO — click to cancel after the current one"
+    : "Check whether each stored NPSSO token is still valid";
+}
+
 function renderAccounts(accounts) {
   currentAccounts = accounts;
   els.list.innerHTML = "";
 
   const count = accounts.length;
   updateRefreshAllBtn(count);
+  updateCheckAllBtn(accounts);
   els.groupLabel.textContent = count > 0 ? `Accounts · ${count}` : "";
   els.footerStat.textContent = count > 0 ? `${count} account${count !== 1 ? "s" : ""}` : "";
   els.list.classList.toggle("hidden", count === 0);
@@ -431,8 +454,18 @@ els.refreshAllBtn.addEventListener("click", () => {
     chrome.runtime.sendMessage({ action: "cancelRefreshAll" });
     els.refreshAllLabel.textContent = "Cancelling…";
   } else {
-    if (currentAccounts.length === 0 || fetchingId) return;
+    if (currentAccounts.length === 0 || fetchingId || checkState?.running) return;
     chrome.runtime.sendMessage({ action: "refreshAll" });
+  }
+});
+
+els.checkAllBtn.addEventListener("click", () => {
+  if (checkState?.running) {
+    chrome.runtime.sendMessage({ action: "cancelCheckAll" });
+    els.checkAllLabel.textContent = "Cancelling…";
+  } else {
+    if (currentAccounts.filter((a) => a.npsso).length === 0 || fetchingId || refreshState?.running) return;
+    chrome.runtime.sendMessage({ action: "checkAllNpsso" });
   }
 });
 
@@ -571,12 +604,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 (async function init() {
-  const [accounts, stored] = await Promise.all([
+  const [accounts, storedRefresh, storedCheck] = await Promise.all([
     loadAccounts(),
     new Promise((resolve) => {
       chrome.storage.local.get([REFRESH_KEY], (result) => resolve(result[REFRESH_KEY]));
     }),
+    new Promise((resolve) => {
+      chrome.storage.local.get([CHECK_KEY], (result) => resolve(result[CHECK_KEY]));
+    }),
   ]);
-  refreshState = stored ?? null;
+  refreshState = storedRefresh ?? null;
+  checkState = storedCheck ?? null;
   renderAccounts(accounts);
 })();

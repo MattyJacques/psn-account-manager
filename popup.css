@@ -98,6 +98,14 @@ header {
 #refreshAllBtn.running .refresh-icon { animation: refresh-spin 1s linear infinite; }
 @keyframes refresh-spin { to { transform: rotate(360deg); } }
 
+#checkAllBtn.running {
+  color: #2fd3a0; /* matches the NPSSO ACTIVE status color */
+  border-color: rgba(47, 211, 160, 0.4);
+}
+
+#checkAllBtn .check-icon { flex-shrink: 0; }
+#checkAllBtn.running .check-icon { animation: refresh-spin 1s linear infinite; }
+
 /* ── Main ── */
 
 main {
