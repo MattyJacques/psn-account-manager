@@ -420,7 +420,7 @@ function renderAccounts(accounts) {
     getBtn.title = "Sign in to PSN and fetch NPSSO";
     getBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (fetchingId || refreshState?.running || checkState?.running) return;
+      if (fetchingId || checkingId || refreshState?.running || checkState?.running) return;
       fetchingId = account.id;
       chrome.runtime.sendMessage({ action: "openSignIn", id: account.id, email: account.email, password: account.password });
       renderAccounts(accounts);
