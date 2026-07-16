@@ -674,56 +674,70 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
   const authTab = await waitForSonyAuthTab(tab.id);
   createdTabIds.push(authTab.id);
 
-  await chrome.scripting.executeScript({
+  // The injected func returns a promise reporting how far the fill got, so a
+  // miss fails this attempt IMMEDIATELY (throw → refreshAll retries from
+  // scratch) instead of leaving an untouched email page to silently burn the
+  // whole 90s capture window. The email poll is 20s: the tab's "complete"
+  // status fires well before Sony's SPA renders the email field, and a slow
+  // load routinely needs more than the 3s this poll used to allow.
+  const [{ result: fillResult }] = await chrome.scripting.executeScript({
     target: { tabId: authTab.id },
     func: (emailToFill, passwordToFill) => {
-      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      return new Promise((resolve) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
 
-      function fillInput(input, value) {
-        nativeSetter.call(input, value);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-
-      function tryPasswordClick(attemptsLeft) {
-        if (attemptsLeft === 0) return;
-        const btn = document.querySelector("button#signin-password-button");
-        if (!btn || btn.getAttribute("aria-disabled") === "true") {
-          setTimeout(() => tryPasswordClick(attemptsLeft - 1), 100);
-          return;
+        function fillInput(input, value) {
+          nativeSetter.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
         }
-        btn.click();
-      }
 
-      function tryPassword(attemptsLeft) {
-        if (attemptsLeft === 0) return;
-        const input = document.querySelector("input#signin-password-input-password");
-        if (!input) {
-          setTimeout(() => tryPassword(attemptsLeft - 1), 200);
-          return;
+        function tryPasswordClick(attemptsLeft) {
+          if (attemptsLeft === 0) return resolve("password-button-timeout");
+          const btn = document.querySelector("button#signin-password-button");
+          if (!btn || btn.getAttribute("aria-disabled") === "true") {
+            setTimeout(() => tryPasswordClick(attemptsLeft - 1), 100);
+            return;
+          }
+          btn.click();
+          resolve("submitted");
         }
-        fillInput(input, passwordToFill);
-        tryPasswordClick(20); // wait up to 2 s for React to enable the button
-      }
 
-      function tryEmail(attemptsLeft) {
-        if (attemptsLeft === 0) return;
-        const input = document.querySelector("input#signin-entrance-input-signinId");
-        if (!input) {
-          setTimeout(() => tryEmail(attemptsLeft - 1), 200);
-          return;
+        function tryPassword(attemptsLeft) {
+          if (attemptsLeft === 0) return resolve("password-input-timeout");
+          const input = document.querySelector("input#signin-password-input-password");
+          if (!input) {
+            setTimeout(() => tryPassword(attemptsLeft - 1), 200);
+            return;
+          }
+          fillInput(input, passwordToFill);
+          tryPasswordClick(30); // wait up to 3 s for React to enable the button
         }
-        fillInput(input, emailToFill);
-        const btn = document.querySelector("button#signin-entrance-button");
-        if (btn) btn.click();
 
-        if (passwordToFill) tryPassword(25); // poll up to 5 s for SPA to swap to password step
-      }
+        function tryEmail(attemptsLeft) {
+          if (attemptsLeft === 0) return resolve("email-input-timeout");
+          const input = document.querySelector("input#signin-entrance-input-signinId");
+          if (!input) {
+            setTimeout(() => tryEmail(attemptsLeft - 1), 200);
+            return;
+          }
+          fillInput(input, emailToFill);
+          const btn = document.querySelector("button#signin-entrance-button");
+          if (btn) btn.click();
 
-      tryEmail(15); // poll up to 3 s for SPA render
+          if (passwordToFill) tryPassword(50); // poll up to 10 s for SPA to swap to password step
+          else resolve("submitted");
+        }
+
+        tryEmail(100); // poll up to 20 s for the SPA to render the email field
+      });
     },
     args: [email, password ?? null],
   });
+
+  if (fillResult !== "submitted") {
+    throw new Error(`Credential fill failed on the Sony auth page ("${fillResult}")`);
+  }
 
   // After credentials are submitted Sony may interpose extra pages before
   // completing the sign-in: a 2FA verification-code challenge (needs a code only
