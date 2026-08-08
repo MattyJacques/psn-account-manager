@@ -34,7 +34,26 @@ const INTERCEPTOR_SCRIPTS = [
   },
 ];
 const INTERCEPTOR_IDS = INTERCEPTOR_SCRIPTS.map((s) => s.id);
-const CAPTURE_TIMEOUT_MS = 90_000;
+
+// Sony's auth SPA fails the sign-in when it is driven faster than a person
+// could plausibly type. Filling a field and clicking its button in the same
+// tick (the credential fill used to do both ~14ms apart) reliably ended in
+// Sony's "Something went wrong." error: the form unmounted mid-transition,
+// recovered, and the eventual POST to /api/v1/ssocookie came back 400. Nothing
+// network-level explained it — every request up to the moment the error
+// rendered returned 2xx — so the trigger is inside Sony's own SPA and the exact
+// mechanism is unknown. What is verified is that pausing before each
+// interaction fixes it: 3s/step signed in successfully every time, including on
+// accounts that had failed repeatedly. Hence this pause before each of the four
+// interactions (fill email, click Next, fill password, click Sign In), which
+// adds ~4x this value to a sign-in. Lower it only against real sign-ins, and
+// raise it first if "Something went wrong." ever comes back.
+const SIGNIN_STEP_PACING_MS = 3000;
+
+// The paced fill spends ~4x SIGNIN_STEP_PACING_MS on the auth page before the
+// post-auth homepage load the interceptor is waiting for, so the capture window
+// absorbs that on top of what it always needed.
+const CAPTURE_TIMEOUT_MS = 120_000;
 // Sony sometimes challenges the sign-in with a 2FA verification-code page, which
 // can only be cleared by the user typing the emailed/texted code. When that
 // happens we extend the capture window to this longer value so the interceptor
@@ -682,8 +701,13 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
   // load routinely needs more than the 3s this poll used to allow.
   const [{ result: fillResult }] = await chrome.scripting.executeScript({
     target: { tabId: authTab.id },
-    func: (emailToFill, passwordToFill) => {
+    func: (emailToFill, passwordToFill, pacingMs) => {
       return new Promise((resolve) => {
+        // Paces the automated interactions — see SIGNIN_STEP_PACING_MS. Runs fn
+        // synchronously when pacing is off, so a 0 keeps the original timing
+        // rather than deferring every step by a task.
+        const after = (ms, fn) => (ms > 0 ? setTimeout(fn, ms) : fn());
+
         const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
 
         function fillInput(input, value) {
@@ -692,6 +716,9 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
           input.dispatchEvent(new Event("change", { bubbles: true }));
         }
 
+        // Each poll below measures its budget from when the step began, and the
+        // pacing pause is taken only AFTER the element it waits for has been
+        // found — so pacing can never eat into a poll's timeout.
         function tryPasswordClick(attemptsLeft) {
           if (attemptsLeft === 0) return resolve("password-button-timeout");
           const btn = document.querySelector("button#signin-password-button");
@@ -699,8 +726,10 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
             setTimeout(() => tryPasswordClick(attemptsLeft - 1), 100);
             return;
           }
-          btn.click();
-          resolve("submitted");
+          after(pacingMs, () => {
+            btn.click();
+            resolve("submitted");
+          });
         }
 
         function tryPassword(attemptsLeft) {
@@ -710,8 +739,10 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
             setTimeout(() => tryPassword(attemptsLeft - 1), 200);
             return;
           }
-          fillInput(input, passwordToFill);
-          tryPasswordClick(30); // wait up to 3 s for React to enable the button
+          after(pacingMs, () => {
+            fillInput(input, passwordToFill);
+            tryPasswordClick(30); // wait up to 3 s for React to enable the button
+          });
         }
 
         function tryEmail(attemptsLeft) {
@@ -721,18 +752,22 @@ async function driveSignInFlow(tab, createdTabIds, email, password, accountId) {
             setTimeout(() => tryEmail(attemptsLeft - 1), 200);
             return;
           }
-          fillInput(input, emailToFill);
-          const btn = document.querySelector("button#signin-entrance-button");
-          if (btn) btn.click();
+          after(pacingMs, () => {
+            fillInput(input, emailToFill);
+            const btn = document.querySelector("button#signin-entrance-button");
+            after(pacingMs, () => {
+              if (btn) btn.click();
 
-          if (passwordToFill) tryPassword(50); // poll up to 10 s for SPA to swap to password step
-          else resolve("submitted");
+              if (passwordToFill) tryPassword(50); // poll up to 10 s for SPA to swap to password step
+              else resolve("submitted");
+            });
+          });
         }
 
         tryEmail(100); // poll up to 20 s for the SPA to render the email field
       });
     },
-    args: [email, password ?? null],
+    args: [email, password ?? null, SIGNIN_STEP_PACING_MS],
   });
 
   if (fillResult !== "submitted") {
